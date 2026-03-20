@@ -155,7 +155,10 @@ elif paso == 2:
         WHERE s.id_contrato=%s AND s.numero_sesion=1
     """, (c["id_contrato"],))
 
-    if primera and primera[0].get("fecha_hora_programada") and primera[0].get("estado_confirmacion") in ("pendiente","confirmada","modificada"):
+    # Fecha 2099 = placeholder, el paciente aún no eligió turno
+    turno_elegido = (primera and primera[0].get("fecha_hora_programada") and 
+                     str(primera[0]["fecha_hora_programada"])[:4] != "2099")
+    if turno_elegido and primera[0].get("estado_confirmacion") in ("pendiente","confirmada","modificada"):
         ps   = primera[0]
         conf = ps["estado_confirmacion"]
 
@@ -383,7 +386,7 @@ elif paso == 4:
 # ═══════════════════════════
 elif paso >= 5:
     st.success("## Todo listo!")
-
+    st.balloons()
 
     primera = run_query("""
         SELECT s.fecha_hora_programada, s.modalidad, s.estado_confirmacion,

@@ -134,18 +134,17 @@ with tab_pac:
                 dias_frec = frec_map.get(prog_data.get("frecuencia","quincenal"), 14)
                 for i in range(int(prog_data["cantidad_sesiones"])):
                     fecha_s = f_inicio + dt.timedelta(days=i * dias_frec)
+                    # Fecha placeholder lejana — el paciente elige el turno real en onboarding paso 3
+                    placeholder = dt.datetime(2099, 1, 1, 9, 0)
                     run_command("""
                         INSERT INTO sesiones
                             (id_contrato, id_nutricionista_prog, numero_sesion,
                              fecha_hora_original, fecha_hora_programada,
-                             modalidad, estado, contador_reprogramaciones)
+                             modalidad, estado, estado_confirmacion, contador_reprogramaciones)
                         SELECT %s,
                                (SELECT id_nutricionista FROM nutricionistas WHERE estado=TRUE LIMIT 1),
-                               %s, %s, %s, %s, 'programada', 0
-                    """, (id_contrato, i+1,
-                          dt.datetime.combine(fecha_s, dt.time(9,0)),
-                          dt.datetime.combine(fecha_s, dt.time(9,0)),
-                          'presencial'))  # paciente elige modalidad en onboarding paso 3
+                               %s, %s, %s, %s, 'programada', 'pendiente', 0
+                    """, (id_contrato, i+1, placeholder, placeholder, 'presencial'))
 
                 st.session_state["usuario"] = {
                     "id_usuario":       id_usuario,
