@@ -165,39 +165,44 @@ if modo == "Usar plantilla":
         SELECT id_plantilla, nombre, descripcion, estructura
         FROM plantillas_plan WHERE activa = TRUE ORDER BY nombre
     """)
-
     if not plantillas:
         st.warning("No hay plantillas disponibles. Creá una desde Administración.")
         st.stop()
-
     plantilla_opts = {p["nombre"]: p for p in plantillas}
     plantilla_sel  = st.selectbox("Seleccioná una plantilla", list(plantilla_opts.keys()))
     plantilla      = plantilla_opts[plantilla_sel]
-
     st.caption(plantilla.get("descripcion", ""))
     st.markdown("---")
     st.subheader("Completá el plan")
-
     estructura = plantilla["estructura"]
-
     import re
     campos = re.findall(r'\{\{(\w+)\}\}', estructura)
-
     valores = {
         "PACIENTE":      nombre_paciente,
         "FECHA":         str(date.today()),
         "NUTRICIONISTA": f"{usuario['nombre']} {usuario['apellido']}",
     }
-
+    labels_map = {
+        "OBJETIVO":        "Objetivo principal",
+        "DESAYUNO":        "Desayuno",
+        "MEDIA_MANANA":    "Media mañana",
+        "ALMUERZO":        "Almuerzo",
+        "MERIENDA":        "Merienda",
+        "CENA":            "Cena",
+        "HIDRATACION":     "Hidratación",
+        "ACTIVIDAD":       "Actividad física",
+        "EVITAR":          "A evitar",
+        "RECOMENDACIONES": "Recomendaciones",
+        "VIGENCIA":        "Vigente hasta",
+    }
     campos_unicos = list(dict.fromkeys(campos))
     col1, col2 = st.columns(2)
-
     for i, campo in enumerate(campos_unicos):
         if campo in valores:
             continue
-        label = campo.replace("_", " ").capitalize()
+        label = labels_map.get(campo, campo.replace("_", " ").capitalize())
         with (col1 if i % 2 == 0 else col2):
-            if campo in ("OBJETIVO", "DESAYUNO", "MEDIA_MAÑANA", "ALMUERZO",
+            if campo in ("OBJETIVO", "DESAYUNO", "MEDIA_MANANA", "ALMUERZO",
                           "MERIENDA", "CENA", "HIDRATACION", "ACTIVIDAD",
                           "EVITAR", "RECOMENDACIONES"):
                 valores[campo] = st.text_area(label, key=f"campo_{campo}", height=80)
@@ -208,14 +213,11 @@ if modo == "Usar plantilla":
                 valores[campo] = str(fecha_v)
             else:
                 valores[campo] = st.text_input(label, key=f"campo_{campo}")
-
     contenido_plan = estructura
     for k, v in valores.items():
         contenido_plan = contenido_plan.replace(f"{{{{{k}}}}}", v or "—")
-
     with st.expander("Vista previa del plan"):
         st.markdown(contenido_plan)
-
 
 # ═══════════════════════════════════════
 # MODO 2 — SUBIR PDF
