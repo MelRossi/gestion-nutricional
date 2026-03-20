@@ -305,7 +305,7 @@ st.markdown("---")
 st.markdown("""
 <div style='text-align:center; padding: 1.5rem 0'>
     <p style='font-size:1.15rem; color:#555; max-width:700px; margin:auto'>
-        Trabajamos con vos de forma personalizada para que alcances tus objetivos.<br>
+        Trabajamos con vos de forma personalizada para que alcancés tus objetivos.<br>
         Cada programa incluye seguimiento con nutricionista y un plan hecho a tu medida.
     </p>
 </div>

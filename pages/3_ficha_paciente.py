@@ -148,12 +148,12 @@ if c:
         st.markdown(f"**{c['nutricionista'].split()[0]}**")
     with col3:
         st.caption("Realizadas")
-        st.markdown(f"**{realizadas} / {total}**")
+        st.markdown(f"**{realizadas}/{total}**")
     with col4:
         st.caption("Restantes")
         st.markdown(f"**{restantes}**")
     with col5:
-        st.caption("Reprog.")
+        st.caption("Reprogramaciones")
         st.markdown(f"**{c['reprogramaciones_usadas']}/{c['reprog_max']}**")
     st.progress(realizadas / total if total > 0 else 0,
                 text=f"{realizadas} realizadas · {restantes} restantes")
@@ -567,7 +567,7 @@ with tab4:
                                     story.append(Paragraph(linea or " ", styles["Normal"]))
                                 doc.build(story)
                                 buf.seek(0)
-                                st.download_button("", data=buf,
+                                st.download_button("📥", data=buf,
                                     file_name=f"plan_{nombre_completo.replace(' ','_')}_v{plan['version']}.pdf",
                                     mime="application/pdf",
                                     key=f"dl_{plan['id_plan']}",

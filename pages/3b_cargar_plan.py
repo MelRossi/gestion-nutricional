@@ -123,7 +123,7 @@ with st.expander("Buscar en planes anteriores de este paciente", expanded=False)
                 with st.container(border=True):
                     col1, col2 = st.columns([4, 1])
                     with col1:
-                        badge = {"activo":"🟢","historico":"⚫","borrador":"🟡"}.get(r["estado"],"⚪")
+                        badge = {"activo":"🟢","reemplazado":"⚫","borrador":"🟡"}.get(r["estado"],"⚪")
                         st.markdown(f"{badge} **{titulo}** (v{r['version']}) — {r['nutricionista']}")
                         st.caption(f"Estado: {r['estado']} · Fecha: {str(r['fecha_creacion'])[:10]}")
                         if r["contenido"] and busqueda.lower() in r["contenido"].lower():
@@ -272,7 +272,7 @@ if st.button("Guardar plan nutricional",
         if estado_plan == "activo":
             run_command("""
                 UPDATE planes_nutricionales
-                SET estado = 'historico'
+                SET estado = 'reemplazado'
                 WHERE id_paciente = %s AND estado = 'activo'
             """, (id_paciente,))
 
