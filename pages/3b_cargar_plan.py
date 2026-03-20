@@ -197,7 +197,7 @@ if modo == "Usar plantilla":
             continue
         label = campo.replace("_", " ").capitalize()
         with (col1 if i % 2 == 0 else col2):
-            if campo in ("OBJETIVO", "DESAYUNO", "MEDIA_MANANA", "ALMUERZO",
+            if campo in ("OBJETIVO", "DESAYUNO", "MEDIA_MAÑANA", "ALMUERZO",
                           "MERIENDA", "CENA", "HIDRATACION", "ACTIVIDAD",
                           "EVITAR", "RECOMENDACIONES"):
                 valores[campo] = st.text_area(label, key=f"campo_{campo}", height=80)
