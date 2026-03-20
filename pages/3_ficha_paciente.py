@@ -567,7 +567,7 @@ with tab4:
                                     story.append(Paragraph(linea or " ", styles["Normal"]))
                                 doc.build(story)
                                 buf.seek(0)
-                                st.download_button("Descargar", data=buf,
+                                st.download_button("📥", data=buf,
                                     file_name=f"plan_{nombre_completo.replace(' ','_')}_v{plan['version']}.pdf",
                                     mime="application/pdf",
                                     key=f"dl_{plan['id_plan']}",
