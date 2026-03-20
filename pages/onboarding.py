@@ -166,6 +166,8 @@ elif paso == 2:
             st.success(f"Tu primera sesion fue confirmada: **{str(ps['fecha_hora_programada'])[:16]}** con **{ps['nutricionista']}**")
             if st.button("Continuar al siguiente paso", use_container_width=True, type="primary"):
                 avanzar_paso(3)
+        if st.button("← Volver", use_container_width=True, key="volver_conf"):
+            avanzar_paso(1)
 
         elif conf == "modificada":
             st.warning(f"Tu nutricionista propuso un nuevo horario: **{str(ps['fecha_hora_programada'])[:16]}** con **{ps['nutricionista']}**")
@@ -188,6 +190,8 @@ elif paso == 2:
             st.caption("Te notificaremos cuando sea confirmado.")
             if st.button("Continuar y completar mis datos mientras espero", use_container_width=True):
                 avanzar_paso(3)
+        if st.button("← Volver", use_container_width=True, key="volver_pend"):
+            avanzar_paso(1)
 
     else:
         # Elegir modalidad
@@ -237,8 +241,10 @@ elif paso == 2:
                     por_dia[dia].append(s)
 
                 st.markdown(f"**{len(slots)} turnos disponibles:**")
-                dias_es    = ["Lunes","Martes","Miercoles","Jueves","Viernes","Sabado","Domingo"]
-                slot_eleg  = None
+                dias_es = ["Lunes","Martes","Miercoles","Jueves","Viernes","Sabado","Domingo"]
+
+                # Mapa de slots por id para recuperar después del rerun
+                slots_map = {s["id_slot"]: s for s in slots}
 
                 for dia, slots_dia in sorted(por_dia.items()):
                     fecha_obj  = date.fromisoformat(dia)
@@ -250,7 +256,13 @@ elif paso == 2:
                         with cols[i % 4]:
                             if st.button(f"{hora}\n{slot['nutricionista'].split()[0]}",
                                          key=f"slot_{slot['id_slot']}", use_container_width=True):
-                                slot_eleg = slot
+                                st.session_state["slot_elegido_id"] = slot["id_slot"]
+                                st.rerun()
+
+                # Recuperar slot elegido del session_state
+                slot_eleg = None
+                if "slot_elegido_id" in st.session_state:
+                    slot_eleg = slots_map.get(st.session_state["slot_elegido_id"])
 
                 if slot_eleg:
                     st.markdown("---")
@@ -259,27 +271,36 @@ elif paso == 2:
                     col1, col2 = st.columns(2)
                     with col1:
                         if st.button("Cambiar horario", use_container_width=True):
+                            del st.session_state["slot_elegido_id"]
                             st.rerun()
                     with col2:
                         if st.button("Confirmar turno", use_container_width=True, type="primary"):
-                            run_command("""
-                                UPDATE contratos SET id_nutricionista=%s, modalidad_primera_sesion=%s
-                                WHERE id_contrato=%s
-                            """, (slot_eleg["id_nutricionista"], modalidad, c["id_contrato"]))
-                            run_command("""
-                                UPDATE sesiones
-                                SET fecha_hora_programada=%s, id_nutricionista_prog=%s,
-                                    modalidad=%s, estado='programada',
-                                    estado_confirmacion='pendiente'
-                                WHERE id_contrato=%s AND numero_sesion=1
-                            """, (slot_eleg["fecha_hora_inicio"], slot_eleg["id_nutricionista"],
-                                  modalidad, c["id_contrato"]))
-                            run_command("""
-                                UPDATE disponibilidad SET estado='reservado',
-                                id_sesion=(SELECT id_sesion FROM sesiones WHERE id_contrato=%s AND numero_sesion=1)
-                                WHERE id_slot=%s
-                            """, (c["id_contrato"], slot_eleg["id_slot"]))
-                            avanzar_paso(3)
+                            try:
+                                run_command("""
+                                    UPDATE contratos SET id_nutricionista=%s, modalidad_primera_sesion=%s
+                                    WHERE id_contrato=%s
+                                """, (slot_eleg["id_nutricionista"], modalidad, c["id_contrato"]))
+                                run_command("""
+                                    UPDATE sesiones
+                                    SET fecha_hora_programada=%s, id_nutricionista_prog=%s,
+                                        modalidad=%s, estado='programada',
+                                        estado_confirmacion='pendiente'
+                                    WHERE id_contrato=%s AND numero_sesion=1
+                                """, (slot_eleg["fecha_hora_inicio"], slot_eleg["id_nutricionista"],
+                                      modalidad, c["id_contrato"]))
+                                run_command("""
+                                    UPDATE disponibilidad SET estado='reservado',
+                                    id_sesion=(SELECT id_sesion FROM sesiones 
+                                               WHERE id_contrato=%s AND numero_sesion=1 LIMIT 1)
+                                    WHERE id_slot=%s
+                                """, (c["id_contrato"], slot_eleg["id_slot"]))
+                                if "slot_elegido_id" in st.session_state:
+                                    del st.session_state["slot_elegido_id"]
+                                avanzar_paso(3)
+                            except Exception as e:
+                                import traceback
+                                st.error(f"Error al confirmar: {e}")
+                                st.code(traceback.format_exc())
 
         if st.button("Volver", use_container_width=True, key="volver_p3"):
             avanzar_paso(1)
