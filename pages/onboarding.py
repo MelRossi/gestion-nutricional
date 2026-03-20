@@ -407,7 +407,6 @@ elif paso == 4:
 # ═══════════════════════════
 elif paso >= 5:
     st.success("## Todo listo!")
-    st.balloons()
 
     primera = run_query("""
         SELECT s.fecha_hora_programada, s.modalidad, s.estado_confirmacion,
