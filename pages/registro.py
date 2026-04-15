@@ -165,7 +165,7 @@ with tab_pac:
 # REGISTRO NUTRICIONISTA
 # ═══════════════════════════════════════
 with tab_nutri:
-    st.caption("Tu cuenta quedara pendiente de aprobacion por el administrador.")
+    st.caption("Tu cuenta quedara pendiente de aprobación por el administrador.")
 
     with st.form("form_registro_nutri"):
         col1, col2 = st.columns(2)

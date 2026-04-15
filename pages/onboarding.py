@@ -46,7 +46,7 @@ def avanzar_paso(nuevo_paso):
 mostrar_sidebar()
 
 # Header
-st.markdown(f"## Bienvenida a tu programa nutricional")
+st.markdown(f"## Bienvenido/a a tu programa nutricional")
 st.markdown(f"**{c['programa']}** — Completa los siguientes pasos para comenzar.")
 st.markdown("---")
 
@@ -109,7 +109,7 @@ elif paso == 1:
         st.markdown(f"""
 **CONSENTIMIENTO INFORMADO**
 
-Yo, **{nombre_completo}**, declaro haber sido informada sobre el programa **"{c['programa']}"** y acepto participar bajo las siguientes condiciones:
+Yo, **{nombre_completo}**, declaro haber sido informado/a sobre el programa **"{c['programa']}"** y acepto participar bajo las siguientes condiciones:
 
 **1. NATURALEZA DEL SERVICIO**
 El programa incluye {c['cantidad_sesiones']} sesiones de consulta nutricional personalizada con seguimiento profesional.
@@ -232,7 +232,7 @@ elif paso == 2:
             """, ids_nutris + [f_desde, f_hasta])
 
             if not slots:
-                st.info("No hay turnos disponibles en ese periodo. Proba con otras fechas.")
+                st.info("No hay turnos disponibles en ese período. Prueba con otras fechas.")
             else:
                 from collections import defaultdict
                 por_dia = defaultdict(list)
@@ -315,22 +315,22 @@ elif paso == 3:
     with st.form("form_anamnesis"):
         col1, col2 = st.columns(2)
         with col1:
-            objetivo      = st.text_area("Cual es tu objetivo principal *", placeholder="Ej: bajar de peso, mejorar mis habitos...")
+            objetivo      = st.text_area("Cuál es tu objetivo principal *", placeholder="Ej: bajar de peso, mejorar mis habitos...")
             enfermedades  = st.text_area("Enfermedades o condiciones de salud", placeholder="Escribi 'ninguna' si no tenes")
             medicamentos  = st.text_area("Medicamentos que tomas", placeholder="Nombre y dosis")
             alergias      = st.text_area("Alergias o intolerancias", placeholder="Ej: lactosa, gluten...")
             restricciones = st.text_area("Restricciones en tu dieta", placeholder="Ej: vegetariana, vegana...")
         with col2:
-            habitos      = st.text_area("Como describirias tus habitos alimentarios", placeholder="Ej: como rapido, salteo comidas...")
-            actividad    = st.selectbox("Nivel de actividad fisica",
+            habitos      = st.text_area("Cómo describirías tus habitos alimentarios", placeholder="Ej: como rapido, salteo comidas...")
+            actividad    = st.selectbox("Nivel de actividad física",
                                 ["sedentario","leve","moderado","intenso","muy_intenso"])
-            frec_act     = st.text_input("Con que frecuencia", placeholder="Ej: 3 veces por semana")
+            frec_act     = st.text_input("Con qué frecuencia", placeholder="Ej: 3 veces por semana")
             tipo_trabajo = st.text_input("Tipo de trabajo", placeholder="Ej: oficina, trabajo fisico")
-            horas_trab   = st.selectbox("Horas de trabajo por dia",   [4,5,6,7,8,9,10,11,12], index=4)
-            horas_sueno  = st.selectbox("Horas de sueno por noche",   [4,5,6,7,8,9,10], index=3)
+            horas_trab   = st.selectbox("Horas de trabajo por día",   [4,5,6,7,8,9,10,11,12], index=4)
+            horas_sueno  = st.selectbox("Horas de sueño por noche",   [4,5,6,7,8,9,10], index=3)
             consumo_agua = st.selectbox("Consumo de agua diario (L)", [0.5,1.0,1.5,2.0,2.5,3.0], index=2)
-            nivel_estres = st.selectbox("Nivel de estres habitual",   ["bajo","moderado","alto","muy_alto"], index=1)
-            observaciones = st.text_area("Algo mas que quieras contarle a tu nutricionista", placeholder="Opcional")
+            nivel_estres = st.selectbox("Nivel de estrés habitual",   ["bajo","moderado","alto","muy_alto"], index=1)
+            observaciones = st.text_area("Algo más que quieras contarle a tu nutricionista", placeholder="Opcional")
 
         col_b1, col_b2 = st.columns(2)
         with col_b1:
@@ -420,12 +420,12 @@ elif paso >= 5:
         ps   = primera[0]
         conf = ps.get("estado_confirmacion","")
         if conf == "confirmada":
-            st.markdown(f"**Tu primera sesion esta confirmada:**")
+            st.markdown(f"**Tu primera sesión esta confirmada:**")
             st.markdown(f"- Fecha: **{str(ps['fecha_hora_programada'])[:16]}**")
             st.markdown(f"- Modalidad: **{ps['modalidad']}**")
             st.markdown(f"- Nutricionista: **{ps['nutricionista']}**")
         else:
-            st.info(f"Turno solicitado: **{str(ps['fecha_hora_programada'])[:16]}** — pendiente de confirmacion. Te avisaremos por email.")
+            st.info(f"Turno solicitado: **{str(ps['fecha_hora_programada'])[:16]}** — pendiente de confirmación. Te avisaremos por email.")
     else:
         st.info("Tu nutricionista se pondra en contacto para coordinar la primera sesion.")
 

@@ -4,7 +4,7 @@ import pandas as pd
 import json
 from database import run_query, run_command
 from datetime import date, timedelta, datetime
-from utils import mostrar_sidebar
+from utils import mostrar_sidebar, page_header, info_banner
 
 if "usuario" not in st.session_state:
     st.warning("Debés iniciar sesión.")
@@ -19,8 +19,7 @@ rol      = usuario["rol"]
 id_nutri = usuario["id_nutricionista"]
 
 mostrar_sidebar()
-st.title("Agenda")
-st.markdown("---")
+page_header("Agenda")
 
 hoy = date.today()
 
@@ -325,7 +324,7 @@ with tab5:
             fh  = s["fecha_hora_inicio"]
             dia = int(str(fh)[:10].split("-")[2])
             hora = str(fh)[11:16]
-            color = {"disponible":"#1D9E75","reservado":"#185FA5","bloqueado":"#888780"}.get(s["estado"],"#888780")
+            color = {"disponible":"#00DC8E","reservado":"#8C52FF","bloqueado":"#808080"}.get(s["estado"],"#808080")
             slots_json.append({
                 "dia": dia, "hora": hora,
                 "duracion": s["duracion_minutos"],
@@ -398,9 +397,9 @@ with tab5:
 </div>
 
 <div class="legend">
-  <div class="leg-item"><div class="leg-dot" style="background:#1D9E75"></div> Disponible</div>
-  <div class="leg-item"><div class="leg-dot" style="background:#185FA5"></div> Reservado</div>
-  <div class="leg-item"><div class="leg-dot" style="background:#888780"></div> Bloqueado</div>
+  <div class="leg-item"><div class="leg-dot" style="background:#00DC8E"></div> Disponible</div>
+  <div class="leg-item"><div class="leg-dot" style="background:#8C52FF"></div> Reservado</div>
+  <div class="leg-item"><div class="leg-dot" style="background:#808080"></div> Bloqueado</div>
 </div>
 
 <div class="tooltip" id="tip"></div>
@@ -424,7 +423,7 @@ function hideTip() {{
 
         # Gestión de slots debajo del calendario
         if slots_mes:
-            with st.expander("🔧 Cambiar estado de un slot"):
+            with st.expander("Cambiar estado de un slot"):
                 slots_mod = [s for s in slots_mes if s["estado"] != "reservado"]
                 if slots_mod:
                     opts_sl = {f"{str(s['fecha_hora_inicio'])[:16]} ({s['estado']})": s["id_slot"] for s in slots_mod}

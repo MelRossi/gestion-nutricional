@@ -1,2 +1,16 @@
+[server]
+headless = true
+enableCORS = false
+
+[browser]
+gatherUsageStats = false
+
 [client]
 showSidebarNavigation = false
+
+[theme]
+primaryColor = "#00DC8E"
+backgroundColor = "#F7F8F5"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#1A1A1A"
+font = "sans serif"

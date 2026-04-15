@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from database import run_query, run_command
-from utils import mostrar_sidebar
+from utils import mostrar_sidebar, page_header, info_banner
 from datetime import date, timedelta
 
 if "usuario" not in st.session_state:
@@ -22,8 +22,7 @@ mostrar_sidebar()
 # VISTA ADMIN
 # ═══════════════════════════════════════════
 if rol == "administrador":
-    st.title("Pacientes")
-    st.markdown("---")
+    page_header("Pacientes")
 
     # ── Solicitudes de permisos pendientes ──
     solicitudes = run_query("""
@@ -44,7 +43,10 @@ if rol == "administrador":
     """)
 
     if solicitudes:
-        st.warning(f"⚠️ **{len(solicitudes)} solicitud(es) de acceso pendiente(s)**")
+        info_banner(
+            f"Hay {len(solicitudes)} solicitud(es) de acceso pendiente(s).",
+            "warning"
+        )
         for s in solicitudes:
             with st.container(border=True):
                 col1, col2, col3 = st.columns([3, 2, 3])
@@ -188,8 +190,7 @@ if rol == "administrador":
 # VISTA NUTRICIONISTA
 # ═══════════════════════════════════════════
 else:
-    st.title("Mis Pacientes")
-    st.markdown("---")
+    page_header("Pacientes")
 
     tab1, tab2 = st.tabs(["Pacientes activos", "Solicitar acceso a paciente"])
 
