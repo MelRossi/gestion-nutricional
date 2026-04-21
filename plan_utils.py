@@ -336,6 +336,15 @@ def _render_day_row(plan: Dict[str, Any], section_key: str, label: str, qty_html
 # RENDER HTML PREVIEW
 # ============================================================
 
+
+def _inline_text(items: List[str]) -> str:
+    """Render items as inline text separated by · for wide rows."""
+    if not items:
+        return "<span class='empty'>—</span>"
+    text = " · ".join(escape(str(i)) for i in items if i)
+    return f"<span style='font-size:11px;line-height:1.3'>{text}</span>"
+
+
 def render_plan_html(plan_data: Dict[str, Any], page: int = 1) -> str:
     plan = normalize_plan_for_render(plan_data)
     pac = plan.get("paciente", {})
@@ -382,13 +391,13 @@ def render_plan_html(plan_data: Dict[str, Any], page: int = 1) -> str:
 
     <div class="row-wide">
         <div class="row-label wide-label">1/2 mañana<br>1/2 tarde</div>
-        <div class="row-wide-content span-7">{_html_list(plan.get('media_items', []))}</div>
+        <div class="row-wide-content span-7">{_inline_text(plan.get('media_items', []))}</div>
         <div class="qty-col short">{quantities_2}</div>
     </div>
 
     <div class="row-wide">
         <div class="row-label wide-label">Ensalada</div>
-        <div class="row-wide-content span-7">{_html_list(plan.get('ensalada_items', []))}</div>
+        <div class="row-wide-content span-7">{_inline_text(plan.get('ensalada_items', []))}</div>
         <div class="qty-col short">{quantities_3}</div>
     </div>
 
@@ -704,7 +713,7 @@ def build_plan_pdf(plan_data: Dict[str, Any]) -> bytes:
 
     def title_band():
         t = Table([[p(cab.get("titulo", "PLAN DE ALIMENTACIÓN"), style_title)]],
-                  colWidths=[27.4 * cm], rowHeights=[0.92 * cm])
+                  colWidths=[28.1 * cm], rowHeights=[0.92 * cm])
         t.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(PRIMARY)),
             ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor(BORDER)),
@@ -721,7 +730,7 @@ def build_plan_pdf(plan_data: Dict[str, Any]) -> bytes:
             [p("<b>Alergias</b>", style_lbl), p(cab.get("alergias") or "—", style_small)],
             [p("<b>Intolerancias</b>", style_lbl), p(cab.get("intolerancias") or "—", style_small)],
         ]
-        t = Table(rows, colWidths=[3.5 * cm, 10.5 * cm], rowHeights=[0.7 * cm] * 6)
+        t = Table(rows, colWidths=[3.2 * cm, 11.0 * cm])
         t.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (0, -1), colors.HexColor(PRIMARY)),
             ("TEXTCOLOR", (0, 0), (0, -1), colors.white),
@@ -734,7 +743,7 @@ def build_plan_pdf(plan_data: Dict[str, Any]) -> bytes:
 
     def diagnosis_box():
         rows = [[p("<b>Diagnóstico Nutricional</b>", style_lbl), list_para(plan.get("diagnostico_items", []), style_list)]]
-        t = Table(rows, colWidths=[4.6 * cm, 8.6 * cm], rowHeights=[4.2 * cm])
+        t = Table(rows, colWidths=[4.6 * cm, 9.3 * cm], rowHeights=[4.2 * cm])
         t.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (0, 0), colors.HexColor(PRIMARY)),
             ("TEXTCOLOR", (0, 0), (0, 0), colors.white),
@@ -746,7 +755,7 @@ def build_plan_pdf(plan_data: Dict[str, Any]) -> bytes:
 
     def days_header():
         headers = ["", "DÍA 1", "DÍA 2", "DÍA 3", "DÍA 4", "DÍA 5", "DÍA 6", "DÍA 7", "Cantidades"]
-        t = Table([headers], colWidths=[2.15 * cm] + [3.43 * cm] * 7 + [4.95 * cm], rowHeights=[0.66 * cm])
+        t = Table([headers], colWidths=[2.15 * cm] + [3.0 * cm] * 7 + [4.95 * cm], rowHeights=[0.66 * cm])
         t.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(PRIMARY)),
             ("TEXTCOLOR", (0, 0), (-1, -1), colors.white),
@@ -765,7 +774,7 @@ def build_plan_pdf(plan_data: Dict[str, Any]) -> bytes:
         for i in range(1, 8):
             row.append(p(plan["dias"].get(f"dia_{i}", {}).get(field) or "—", style_small))
         row.append(list_para(qty_items, style_small))
-        t = Table([row], colWidths=[2.15 * cm] + [3.43 * cm] * 7 + [4.95 * cm], rowHeights=[2.65 * cm])
+        t = Table([row], colWidths=[2.15 * cm] + [3.0 * cm] * 7 + [4.95 * cm])
         t.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (0, 0), colors.HexColor(PRIMARY)),
             ("TEXTCOLOR", (0, 0), (0, 0), colors.white),
@@ -779,8 +788,10 @@ def build_plan_pdf(plan_data: Dict[str, Any]) -> bytes:
 
     def row_wide(label, items, qty_items=None):
         qty_items = qty_items or []
-        row = [p(f"<b>{label}</b>", style_lbl), list_para(items, style_list), list_para(qty_items, style_small)]
-        t = Table([row], colWidths=[2.15 * cm, 24.01 * cm, 4.95 * cm], rowHeights=[1.22 * cm])
+        inline_text = " · ".join(str(x) for x in items if x) if items else "—"
+        inline_para = Paragraph(escape(inline_text), style_small)
+        row = [p(f"<b>{label}</b>", style_lbl), inline_para, list_para(qty_items, style_small)]
+        t = Table([row], colWidths=[2.15 * cm, 21.0 * cm, 4.95 * cm])
         t.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (0, 0), colors.HexColor(PRIMARY)),
             ("TEXTCOLOR", (0, 0), (0, 0), colors.white),
@@ -794,12 +805,12 @@ def build_plan_pdf(plan_data: Dict[str, Any]) -> bytes:
         rec = Table([
             [p("<b>Recomendaciones</b>", style_list)],
             [list_para(plan.get("recomendaciones_items", []), style_list)]
-        ], colWidths=[17.8 * cm], rowHeights=[0.68 * cm, 4.0 * cm])
+        ], colWidths=[18.8 * cm], rowHeights=[0.68 * cm, 4.0 * cm])
 
         con = Table([
             [p("<b>Consejos Claves</b>", style_list)],
             [list_para(plan.get("consejos_items", []), style_list)]
-        ], colWidths=[9.2 * cm], rowHeights=[0.68 * cm, 4.0 * cm])
+        ], colWidths=[9.3 * cm], rowHeights=[0.68 * cm, 4.0 * cm])
 
         for t in (rec, con):
             t.setStyle(TableStyle([
@@ -807,7 +818,7 @@ def build_plan_pdf(plan_data: Dict[str, Any]) -> bytes:
                 ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor(BORDER)),
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(LIGHT_BG)),
             ]))
-        wrap = Table([[rec, con]], colWidths=[17.8 * cm, 9.2 * cm])
+        wrap = Table([[rec, con]], colWidths=[18.8 * cm, 9.3 * cm])
         wrap.setStyle(TableStyle([
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
             ("RIGHTPADDING", (0, 0), (-1, -1), 0),
@@ -830,7 +841,8 @@ def build_plan_pdf(plan_data: Dict[str, Any]) -> bytes:
 
     story.append(title_band())
     story.append(Spacer(1, 0.15 * cm))
-    top = Table([[patient_box(), diagnosis_box()]], colWidths=[14.0 * cm, 13.4 * cm])
+    logo_cell = Paragraph("", style_small)
+    top = Table([[patient_box(), diagnosis_box()]], colWidths=[14.2 * cm, 13.9 * cm])
     top.setStyle(TableStyle([
         ("LEFTPADDING", (0, 0), (-1, -1), 0),
         ("RIGHTPADDING", (0, 0), (-1, -1), 0),

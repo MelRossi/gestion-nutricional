@@ -644,7 +644,7 @@ with tab3:
                     circ_cadera = st.number_input("Cadera (cm)", min_value=0.0, step=0.1)
                 with col3:
                     circ_brazo = st.number_input("Brazo (cm)", min_value=0.0, step=0.1)
-                    fuente = st.selectbox("Fuente", ["consulta", "formulario", "app", "otro"])
+                    fuente = st.selectbox("Fuente", ["sesion_presencial", "sesion_virtual", "carga_manual", "formulario_inicial"])
 
                 avance_obj = st.text_area("Avances")
                 cambios_h = st.text_area("Cambios de hábitos")
@@ -664,10 +664,16 @@ with tab3:
                         run_command(
                             """
                             INSERT INTO historia_nutricional
-                                (id_paciente, id_contrato, version, peso, talla, imc,
+                                (id_paciente, id_sesion, version, peso, talla, imc,
                                  circ_cintura, circ_cadera, circ_brazo,
                                  avance_objetivos, cambios_habitos, fuente_datos)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            VALUES (
+                                %s,
+                                (SELECT id_sesion FROM sesiones
+                                 WHERE id_contrato = %s
+                                 ORDER BY numero_sesion DESC LIMIT 1),
+                                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s
+                            )
                             """,
                             (
                                 id_paciente,

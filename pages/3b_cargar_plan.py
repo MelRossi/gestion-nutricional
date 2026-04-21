@@ -440,230 +440,344 @@ with tab_plan:
 
             plan_data = st.session_state[editor_key]
 
-            st.markdown("### Cabecera")
-            col1, col2 = st.columns(2)
-            with col1:
-                plan_data["cabecera"]["titulo"] = st.text_input(
-                    "Título visible del plan",
-                    value=plan_data["cabecera"].get("titulo", "PLAN DE ALIMENTACIÓN"),
-                    key=f"{editor_key}_titulo_visible"
-                )
-                plan_data["cabecera"]["objetivo"] = st.text_area(
-                    "Objetivo",
-                    value=plan_data["cabecera"].get("objetivo", ""),
-                    height=FIELD_H_SMALL,
-                    key=f"{editor_key}_objetivo"
-                )
-                plan_data["cabecera"]["alergias"] = st.text_area(
-                    "Alergias",
-                    value=plan_data["cabecera"].get("alergias", ""),
-                    height=FIELD_H_SMALL,
-                    key=f"{editor_key}_alergias"
-                )
-            with col2:
-                plan_data["cabecera"]["intolerancias"] = st.text_area(
-                    "Intolerancias / restricciones",
-                    value=plan_data["cabecera"].get("intolerancias", ""),
-                    height=FIELD_H_SMALL,
-                    key=f"{editor_key}_intolerancias"
-                )
-                plan_data["diagnostico_texto"] = st.text_area(
-                    "Diagnóstico nutricional",
-                    value=plan_data.get("diagnostico_texto", ""),
-                    height=FIELD_H_BIG,
-                    key=f"{editor_key}_diagnostico"
-                )
-                fecha_vigencia = st.date_input(
-                    "Vigente hasta",
-                    value=date.today() + timedelta(days=30),
-                    key=f"{editor_key}_vigencia"
-                )
-                plan_data["meta"]["vigencia"] = str(fecha_vigencia)
-
-            st.markdown("### Días 1 a 7")
-            for i in range(1, 8):
-                key = f"dia_{i}"
-                day = plan_data["dias"].setdefault(key, {"desayuno": "", "almuerzo": "", "cena": ""})
-                with st.expander(f"Día {i}", expanded=(i == 1)):
-                    col_d1, col_d2, col_d3 = st.columns(3)
-                    with col_d1:
-                        day["desayuno"] = st.text_area(
-                            "Desayuno",
-                            value=day.get("desayuno", ""),
-                            key=f"{editor_key}_des_{i}",
-                            height=150
-                        )
-                    with col_d2:
-                        day["almuerzo"] = st.text_area(
-                            "Almuerzo",
-                            value=day.get("almuerzo", ""),
-                            key=f"{editor_key}_alm_{i}",
-                            height=150
-                        )
-                    with col_d3:
-                        day["cena"] = st.text_area(
-                            "Cena",
-                            value=day.get("cena", ""),
-                            key=f"{editor_key}_cena_{i}",
-                            height=150
-                        )
-
-            st.markdown("### Bloques adicionales")
-
-            with st.expander("1/2 mañana y 1/2 tarde", expanded=False):
-                plan_data["media_manana_tarde_texto"] = st.text_area(
-                    "Contenido",
-                    value=plan_data.get("media_manana_tarde_texto", ""),
-                    height=FIELD_H_BIG,
-                    key=f"{editor_key}_media",
-                    label_visibility="collapsed"
-                )
-
-            with st.expander("Ensalada", expanded=False):
-                plan_data["ensalada_texto"] = st.text_area(
-                    "Contenido",
-                    value=plan_data.get("ensalada_texto", ""),
-                    height=FIELD_H_BIG,
-                    key=f"{editor_key}_ensalada",
-                    label_visibility="collapsed"
-                )
-
-            col5, col6 = st.columns(2)
-            with col5:
-                plan_data["cantidades_texto"] = st.text_area(
-                    "Cantidades",
-                    value=plan_data.get("cantidades_texto", ""),
-                    height=FIELD_H_BIG,
-                    key=f"{editor_key}_cantidades"
-                )
-                plan_data["recomendaciones_texto"] = st.text_area(
-                    "Recomendaciones",
-                    value=plan_data.get("recomendaciones_texto", ""),
-                    height=240,
-                    key=f"{editor_key}_recomendaciones"
-                )
-            with col6:
-                plan_data["consejos_texto"] = st.text_area(
-                    "Consejos claves",
-                    value=plan_data.get("consejos_texto", ""),
-                    height=240,
-                    key=f"{editor_key}_consejos"
-                )
-
-            divider()
-            st.markdown("### Vista previa")
+            # ─── VISTA PREVIA (siempre visible) ───
+            st.markdown("### Vista previa del modelo")
             show_plan_preview(plan_data, height=980)
 
             divider()
-            guardar_como_modelo = st.checkbox(
-                "Guardar también este contenido como nuevo modelo reutilizable",
-                key=f"{editor_key}_guardar_como_modelo"
-            )
 
-            titulo_interno = st.text_input(
-                "Nombre interno del plan",
-                value=modelo_seleccionado,
-                key=f"{editor_key}_titulo_interno"
-            )
-            estado_plan = st.selectbox(
-                "Estado",
-                ["activo", "borrador"],
-                key=f"{editor_key}_estado"
-            )
+            # ─── TOGGLE EDICIÓN ───
+            modo_edicion_key = f"modo_edicion_{editor_key}"
+            if modo_edicion_key not in st.session_state:
+                st.session_state[modo_edicion_key] = False
 
-            ultima_version = run_query("""
-                SELECT COALESCE(MAX(version), 0) AS v
-                FROM planes_nutricionales
-                WHERE id_paciente = %s
-            """, (id_paciente,))
-            nueva_version = int(ultima_version[0]["v"]) + 1
+            col_mod1, col_mod2 = st.columns([1, 3])
+            with col_mod1:
+                if not st.session_state[modo_edicion_key]:
+                    if st.button("Modificar plan", use_container_width=True, key=f"btn_activar_edicion_{editor_key}"):
+                        st.session_state[modo_edicion_key] = True
+                        st.rerun()
+                else:
+                    if st.button("Cancelar edición", use_container_width=True, key=f"btn_cancelar_edicion_{editor_key}"):
+                        st.session_state[modo_edicion_key] = False
+                        st.session_state[editor_key] = deepcopy(initial_plan)
+                        st.rerun()
 
-            if st.button("Guardar plan", use_container_width=True, type="primary", key=f"{editor_key}_guardar_plan"):
-                try:
-                    id_contrato = contrato[0]["id_contrato"] if contrato else None
-                    contenido_json = json.dumps(plan_data, ensure_ascii=False)
-                    contenido_texto = plain_text_summary_from_plan(plan_data)
-                    pdf_bytes = build_plan_pdf(plan_data)
-                    pdf_filename = f"plan_{paciente['nombre']}_{paciente['apellido']}_v{nueva_version}.pdf".replace(" ", "_")
+            # ─── EDITOR (solo si se activó) ───
+            if st.session_state.get(modo_edicion_key, False):
+                st.markdown("---")
+                st.markdown("### Editar cabecera")
+                col1, col2 = st.columns(2)
+                with col1:
+                    plan_data["cabecera"]["titulo"] = st.text_input(
+                        "Título visible del plan",
+                        value=plan_data["cabecera"].get("titulo", "PLAN DE ALIMENTACIÓN"),
+                        key=f"{editor_key}_titulo_visible"
+                    )
+                    plan_data["cabecera"]["objetivo"] = st.text_area(
+                        "Objetivo",
+                        value=plan_data["cabecera"].get("objetivo", ""),
+                        height=FIELD_H_SMALL,
+                        key=f"{editor_key}_objetivo"
+                    )
+                    plan_data["cabecera"]["alergias"] = st.text_area(
+                        "Alergias",
+                        value=plan_data["cabecera"].get("alergias", ""),
+                        height=FIELD_H_SMALL,
+                        key=f"{editor_key}_alergias"
+                    )
+                with col2:
+                    plan_data["cabecera"]["intolerancias"] = st.text_area(
+                        "Intolerancias / restricciones",
+                        value=plan_data["cabecera"].get("intolerancias", ""),
+                        height=FIELD_H_SMALL,
+                        key=f"{editor_key}_intolerancias"
+                    )
+                    plan_data["diagnostico_texto"] = st.text_area(
+                        "Diagnóstico nutricional",
+                        value=plan_data.get("diagnostico_texto", ""),
+                        height=FIELD_H_BIG,
+                        key=f"{editor_key}_diagnostico"
+                    )
+                    fecha_vigencia = st.date_input(
+                        "Vigente hasta",
+                        value=date.today() + timedelta(days=30),
+                        key=f"{editor_key}_vigencia"
+                    )
+                    plan_data["meta"]["vigencia"] = str(fecha_vigencia)
 
-                    if estado_plan == "activo":
+                st.markdown("### Días 1 a 7")
+                for i in range(1, 8):
+                    key = f"dia_{i}"
+                    day = plan_data["dias"].setdefault(key, {"desayuno": "", "almuerzo": "", "cena": ""})
+                    with st.expander(f"Día {i}", expanded=(i == 1)):
+                        col_d1, col_d2, col_d3 = st.columns(3)
+                        with col_d1:
+                            day["desayuno"] = st.text_area(
+                                "Desayuno",
+                                value=day.get("desayuno", ""),
+                                key=f"{editor_key}_des_{i}",
+                                height=150
+                            )
+                        with col_d2:
+                            day["almuerzo"] = st.text_area(
+                                "Almuerzo",
+                                value=day.get("almuerzo", ""),
+                                key=f"{editor_key}_alm_{i}",
+                                height=150
+                            )
+                        with col_d3:
+                            day["cena"] = st.text_area(
+                                "Cena",
+                                value=day.get("cena", ""),
+                                key=f"{editor_key}_cena_{i}",
+                                height=150
+                            )
+
+                st.markdown("### Bloques adicionales")
+
+                with st.expander("1/2 mañana y 1/2 tarde", expanded=False):
+                    plan_data["media_manana_tarde_texto"] = st.text_area(
+                        "Contenido",
+                        value=plan_data.get("media_manana_tarde_texto", ""),
+                        height=FIELD_H_BIG,
+                        key=f"{editor_key}_media",
+                        label_visibility="collapsed"
+                    )
+
+                with st.expander("Ensalada", expanded=False):
+                    plan_data["ensalada_texto"] = st.text_area(
+                        "Contenido",
+                        value=plan_data.get("ensalada_texto", ""),
+                        height=FIELD_H_BIG,
+                        key=f"{editor_key}_ensalada",
+                        label_visibility="collapsed"
+                    )
+
+                col5, col6 = st.columns(2)
+                with col5:
+                    plan_data["cantidades_texto"] = st.text_area(
+                        "Cantidades",
+                        value=plan_data.get("cantidades_texto", ""),
+                        height=FIELD_H_BIG,
+                        key=f"{editor_key}_cantidades"
+                    )
+                    plan_data["recomendaciones_texto"] = st.text_area(
+                        "Recomendaciones",
+                        value=plan_data.get("recomendaciones_texto", ""),
+                        height=240,
+                        key=f"{editor_key}_recomendaciones"
+                    )
+                with col6:
+                    plan_data["consejos_texto"] = st.text_area(
+                        "Consejos claves",
+                        value=plan_data.get("consejos_texto", ""),
+                        height=240,
+                        key=f"{editor_key}_consejos"
+                    )
+
+                divider()
+                st.markdown("### Vista previa actualizada")
+                show_plan_preview(plan_data, height=980)
+
+                divider()
+
+                guardar_como_modelo = st.checkbox(
+                    "Guardar también este contenido como nuevo modelo reutilizable",
+                    key=f"{editor_key}_guardar_como_modelo"
+                )
+
+                titulo_interno = st.text_input(
+                    "Nombre interno del plan",
+                    value=modelo_seleccionado,
+                    key=f"{editor_key}_titulo_interno"
+                )
+                estado_plan = st.selectbox(
+                    "Estado",
+                    ["activo", "borrador"],
+                    key=f"{editor_key}_estado"
+                )
+
+                ultima_version = run_query("""
+                    SELECT COALESCE(MAX(version), 0) AS v
+                    FROM planes_nutricionales
+                    WHERE id_paciente = %s
+                """, (id_paciente,))
+                nueva_version = int(ultima_version[0]["v"]) + 1
+
+                if st.button("Guardar plan", use_container_width=True, type="primary", key=f"{editor_key}_guardar_plan"):
+                    try:
+                        id_contrato = contrato[0]["id_contrato"] if contrato else None
+                        contenido_json = json.dumps(plan_data, ensure_ascii=False)
+                        contenido_texto = plain_text_summary_from_plan(plan_data)
+                        pdf_bytes = build_plan_pdf(plan_data)
+                        pdf_filename = f"plan_{paciente['nombre']}_{paciente['apellido']}_v{nueva_version}.pdf".replace(" ", "_")
+
+                        if estado_plan == "activo":
+                            run_command("""
+                                UPDATE planes_nutricionales
+                                SET estado = 'reemplazado'
+                                WHERE id_paciente = %s
+                                  AND estado = 'activo'
+                            """, (id_paciente,))
+
                         run_command("""
-                            UPDATE planes_nutricionales
-                            SET estado = 'reemplazado'
-                            WHERE id_paciente = %s
-                              AND estado = 'activo'
-                        """, (id_paciente,))
-
-                    run_command("""
-                        INSERT INTO planes_nutricionales
-                            (id_paciente, id_contrato, id_nutricionista,
-                             version, titulo, contenido, contenido_json,
-                             estado, fecha_vigencia, archivo_url)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
-                    """, (
-                        id_paciente,
-                        id_contrato,
-                        id_nutri,
-                        nueva_version,
-                        titulo_interno,
-                        contenido_texto,
-                        contenido_json,
-                        estado_plan,
-                        fecha_vigencia,
-                        None,
-                    ))
-
-                    if guardar_como_modelo:
-                        nuevo_modelo = default_template_structured(titulo_interno)
-                        nuevo_modelo["contenido_base"] = {
-                            "cabecera": plan_data["cabecera"],
-                            "diagnostico_texto": plan_data.get("diagnostico_texto", ""),
-                            "media_manana_tarde_texto": plan_data.get("media_manana_tarde_texto", ""),
-                            "ensalada_texto": plan_data.get("ensalada_texto", ""),
-                            "dias": plan_data.get("dias", {}),
-                            "cantidades_texto": plan_data.get("cantidades_texto", ""),
-                            "recomendaciones_texto": plan_data.get("recomendaciones_texto", ""),
-                            "consejos_texto": plan_data.get("consejos_texto", ""),
-                        }
-
-                        run_command("""
-                            INSERT INTO plantillas_plan (nombre, descripcion, estructura, estructura_json, activa, creada_por)
-                            VALUES (%s, %s, %s, %s::jsonb, TRUE, %s)
+                            INSERT INTO planes_nutricionales
+                                (id_paciente, id_contrato, id_nutricionista,
+                                 version, titulo, contenido, contenido_json,
+                                 estado, fecha_vigencia, archivo_url)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
                         """, (
+                            id_paciente,
+                            id_contrato,
+                            id_nutri,
+                            nueva_version,
                             titulo_interno,
-                            f"Modelo generado desde plan del paciente {nombre_paciente}",
-                            "Modelo estructurado",
-                            json.dumps(nuevo_modelo, ensure_ascii=False),
-                            usuario.get("id_usuario"),
+                            contenido_texto,
+                            contenido_json,
+                            estado_plan,
+                            fecha_vigencia,
+                            None,
                         ))
 
-                    email_ok, email_msg = send_plan_email(
-                        to_email=paciente.get("email", ""),
-                        patient_name=nombre_paciente,
-                        pdf_bytes=pdf_bytes,
-                        pdf_filename=pdf_filename,
-                        subject=f"Tu plan nutricional - {titulo_interno}",
-                    )
+                        if guardar_como_modelo:
+                            nuevo_modelo = default_template_structured(titulo_interno)
+                            nuevo_modelo["contenido_base"] = {
+                                "cabecera": plan_data["cabecera"],
+                                "diagnostico_texto": plan_data.get("diagnostico_texto", ""),
+                                "media_manana_tarde_texto": plan_data.get("media_manana_tarde_texto", ""),
+                                "ensalada_texto": plan_data.get("ensalada_texto", ""),
+                                "dias": plan_data.get("dias", {}),
+                                "cantidades_texto": plan_data.get("cantidades_texto", ""),
+                                "recomendaciones_texto": plan_data.get("recomendaciones_texto", ""),
+                                "consejos_texto": plan_data.get("consejos_texto", ""),
+                            }
 
-                    st.success(f"Plan v{nueva_version} guardado correctamente.")
-                    if email_ok:
-                        st.success("El plan se envió por email al paciente.")
-                    else:
-                        st.warning(f"Plan guardado, pero el email no se envió: {email_msg}")
+                            run_command("""
+                                INSERT INTO plantillas_plan (nombre, descripcion, estructura, estructura_json, activa, creada_por)
+                                VALUES (%s, %s, %s, %s::jsonb, TRUE, %s)
+                            """, (
+                                titulo_interno,
+                                f"Modelo generado desde plan del paciente {nombre_paciente}",
+                                "Modelo estructurado",
+                                json.dumps(nuevo_modelo, ensure_ascii=False),
+                                usuario.get("id_usuario"),
+                            ))
 
-                    st.download_button(
-                        "Descargar PDF generado",
-                        data=pdf_bytes,
-                        file_name=pdf_filename,
-                        mime="application/pdf",
-                        use_container_width=True,
-                        key=f"{editor_key}_download_pdf"
-                    )
+                        email_ok, email_msg = send_plan_email(
+                            to_email=paciente.get("email", ""),
+                            patient_name=nombre_paciente,
+                            pdf_bytes=pdf_bytes,
+                            pdf_filename=pdf_filename,
+                            subject=f"Tu plan nutricional - {titulo_interno}",
+                        )
 
-                except Exception as e:
-                    st.error(f"Error al guardar: {e}")
+                        st.success(f"Plan v{nueva_version} guardado correctamente.")
+                        if email_ok:
+                            st.success("El plan se envió por email al paciente.")
+                        else:
+                            st.warning(f"Plan guardado, pero el email no se envió: {email_msg}")
+
+                        st.download_button(
+                            "Descargar PDF generado",
+                            data=pdf_bytes,
+                            file_name=pdf_filename,
+                            mime="application/pdf",
+                            use_container_width=True,
+                            key=f"{editor_key}_download_pdf"
+                        )
+
+                        st.session_state[modo_edicion_key] = False
+                        st.rerun()
+
+                    except Exception as e:
+                        st.error(f"Error al guardar: {e}")
+
+            else:
+                # Fuera del modo edición: solo guardar sin modificar
+                divider()
+                titulo_interno = st.text_input(
+                    "Nombre interno del plan",
+                    value=modelo_seleccionado,
+                    key=f"{editor_key}_titulo_interno_directo"
+                )
+                estado_plan = st.selectbox(
+                    "Estado",
+                    ["activo", "borrador"],
+                    key=f"{editor_key}_estado_directo"
+                )
+
+                ultima_version = run_query("""
+                    SELECT COALESCE(MAX(version), 0) AS v
+                    FROM planes_nutricionales
+                    WHERE id_paciente = %s
+                """, (id_paciente,))
+                nueva_version = int(ultima_version[0]["v"]) + 1
+
+                if st.button("Guardar plan sin modificar", use_container_width=True, type="primary", key=f"{editor_key}_guardar_directo"):
+                    try:
+                        id_contrato = contrato[0]["id_contrato"] if contrato else None
+                        contenido_json = json.dumps(plan_data, ensure_ascii=False)
+                        contenido_texto = plain_text_summary_from_plan(plan_data)
+                        pdf_bytes = build_plan_pdf(plan_data)
+                        pdf_filename = f"plan_{paciente['nombre']}_{paciente['apellido']}_v{nueva_version}.pdf".replace(" ", "_")
+
+                        if estado_plan == "activo":
+                            run_command("""
+                                UPDATE planes_nutricionales
+                                SET estado = 'reemplazado'
+                                WHERE id_paciente = %s
+                                  AND estado = 'activo'
+                            """, (id_paciente,))
+
+                        run_command("""
+                            INSERT INTO planes_nutricionales
+                                (id_paciente, id_contrato, id_nutricionista,
+                                 version, titulo, contenido, contenido_json,
+                                 estado, fecha_vigencia, archivo_url)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
+                        """, (
+                            id_paciente,
+                            id_contrato,
+                            id_nutri,
+                            nueva_version,
+                            titulo_interno,
+                            contenido_texto,
+                            contenido_json,
+                            estado_plan,
+                            date.today() + timedelta(days=30),
+                            None,
+                        ))
+
+                        email_ok, email_msg = send_plan_email(
+                            to_email=paciente.get("email", ""),
+                            patient_name=nombre_paciente,
+                            pdf_bytes=pdf_bytes,
+                            pdf_filename=pdf_filename,
+                            subject=f"Tu plan nutricional - {titulo_interno}",
+                        )
+
+                        st.success(f"Plan v{nueva_version} guardado correctamente.")
+                        if email_ok:
+                            st.success("El plan se envió por email al paciente.")
+                        else:
+                            st.warning(f"Plan guardado, pero el email no se envió: {email_msg}")
+
+                        st.download_button(
+                            "Descargar PDF generado",
+                            data=pdf_bytes,
+                            file_name=pdf_filename,
+                            mime="application/pdf",
+                            use_container_width=True,
+                            key=f"{editor_key}_download_pdf_directo"
+                        )
+                        st.rerun()
+
+                    except Exception as e:
+                        st.error(f"Error al guardar: {e}")
 
             st.session_state[editor_key] = plan_data
+
 
 # ============================================================
 # SUBIR ARCHIVO

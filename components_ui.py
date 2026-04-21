@@ -1,9 +1,8 @@
 import streamlit as st
 from utils import mostrar_sidebar
 
-mostrar_sidebar()
 # ══════════════════════════════════════════════════════
-# NOTIFICACIONES CON COLORES DE PALETA OFICIAL
+# NOTIFICACIONES CON COLORES DE PALETA
 # ══════════════════════════════════════════════════════
 
 def mostrar_notificacion(tipo, mensaje, icono=None):
