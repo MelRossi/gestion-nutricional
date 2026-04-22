@@ -65,7 +65,6 @@ def mostrar_sidebar():
             st.page_link("pages/2_mis_pacientes.py", label="Pacientes")
             st.page_link("pages/3_ficha_paciente.py", label="Ficha del paciente")
             st.page_link("pages/3b_cargar_plan.py", label="Cargar plan")
-            st.page_link("pages/4_pagos.py", label="Pagos")
 
         elif rol == "nutricionista":
             _nav_label("MI TRABAJO")
