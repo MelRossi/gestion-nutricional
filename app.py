@@ -299,7 +299,7 @@ col_logo, col_btns = st.columns([5, 1])
 
 with col_logo:
     st.markdown("# Gisella - Nutrición Profesional")
-    st.markdown("##### Transformá tu salud con un plan personalizado y seguimiento profesional")
+    st.markdown("##### Transforma tu salud con un plan personalizado y seguimiento profesional")
 
 with col_btns:
     st.markdown("<br><br>", unsafe_allow_html=True)
@@ -312,8 +312,8 @@ st.markdown(
     """
     <div style='text-align:center; padding: 1.5rem 0'>
         <p style='font-size:1.15rem; color:#555; max-width:700px; margin:auto'>
-            Trabajamos con vos de forma personalizada para que alcancés tus objetivos.<br>
-            Cada programa incluye seguimiento con nutricionista y un plan hecho a tu medida.
+            Trabajamos contigo de forma personalizada para que alcances tus objetivos.<br>
+            Cada programa incluye seguimiento con nutricionista y un plan adaptado a ti.
         </p>
     </div>
     """,
@@ -337,7 +337,7 @@ col1, col2, col3 = st.columns(3)
 with col1:
     with st.container(border=True):
         st.markdown("### Profesionales certificadas")
-        st.caption("Nuestras nutricionistas tienen formación clínica y acompañamiento continuo.")
+        st.caption("Nuestras nutricionistas cuentan con formación clínica y acompañamiento continuo.")
 
 with col2:
     with st.container(border=True):
@@ -347,7 +347,7 @@ with col2:
 with col3:
     with st.container(border=True):
         st.markdown("### Seguimiento real")
-        st.caption("Medimos tu progreso sesión a sesión para ajustar el plan cuando sea necesario.")
+        st.caption("Medimos tu progreso en cada sesión para ajustar el plan cuando sea necesario.")
 
 st.markdown("---")
 

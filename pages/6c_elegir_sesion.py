@@ -7,7 +7,7 @@ from datetime import date, timedelta
 # CONTROL DE ACCESO — solo pacientes
 # ─────────────────────────────────────────
 if "usuario" not in st.session_state:
-    st.warning("Debés iniciar sesión para acceder.")
+    st.warning("Debes iniciar sesión para acceder.")
     st.stop()
 
 if st.session_state["usuario"]["rol"] != "paciente":
@@ -37,7 +37,7 @@ contrato = run_query("""
 """, (id_paciente,))
 
 if not contrato:
-    st.warning("No tenés un contrato activo. Contactá al administrador.")
+    st.warning("No tenés un contrato activo. Contacta al administrador.")
     st.stop()
 
 c = contrato[0]
@@ -87,7 +87,7 @@ if primera_sesion and primera_sesion[0]["estado"] == "programada":
 # MOSTRAR SLOTS DISPONIBLES
 # ─────────────────────────────────────────
 st.subheader("Slots disponibles")
-st.caption("Seleccioná el día y horario que mejor te quede para tu primera consulta.")
+st.caption("Selecciona el día y horario que mejor te quede para tu primera consulta.")
 
 id_nutricionista = c["id_nutricionista"]
 

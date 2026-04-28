@@ -1,10 +1,31 @@
+from datetime import date, datetime, timedelta, time
+import calendar
+import re
+import requests
+
+import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
-import pandas as pd
-import json
+
 from database import run_query, run_command
-from datetime import date, timedelta, datetime
-from utils import mostrar_sidebar, page_header, info_banner
+from utils import mostrar_sidebar, page_header
+
+
+HORA_INICIO = time(9, 0)
+HORA_FIN = time(18, 0)
+PASO_MIN = 15
+PAIS_FERIADOS = "PE"
+
+GOOGLE_HOLIDAYS_ICS = (
+    "https://calendar.google.com/calendar/ical/"
+    "es.pe%23holiday%40group.v.calendar.google.com/public/basic.ics"
+)
+
+COLOR_DISPONIBLE = "#00DC8E"
+COLOR_RESERVADO = "#8C52FF"
+COLOR_BLOQUEADO = "#808080"
+COLOR_NO_LABORABLE = "#E5E7EB"
+
 
 if "usuario" not in st.session_state:
     st.warning("Debés iniciar sesión.")
@@ -14,685 +35,1673 @@ if st.session_state["usuario"]["rol"] not in ("administrador", "nutricionista"):
     st.error("No tenés permisos.")
     st.stop()
 
-usuario  = st.session_state["usuario"]
-rol      = usuario["rol"]
-id_nutri = usuario["id_nutricionista"]
+usuario = st.session_state["usuario"]
+rol = usuario["rol"]
+id_nutri = usuario.get("id_nutricionista")
+id_usuario = usuario.get("id_usuario") or id_nutri
 
 mostrar_sidebar()
 page_header("Agenda")
 
 hoy = date.today()
 
-# ── MÉTRICAS ──
+
+def fmt_fecha(valor):
+    if not valor:
+        return "—"
+    try:
+        return pd.to_datetime(valor).strftime("%d/%m/%Y")
+    except Exception:
+        return str(valor)[:10]
+
+
+def fmt_fecha_hora(valor):
+    if not valor:
+        return "—"
+    try:
+        return pd.to_datetime(valor).strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        return str(valor)[:16]
+
+
+def safe_int(valor, default=0):
+    try:
+        return int(valor or default)
+    except Exception:
+        return default
+
+
+def generar_horas_inicio():
+    horas = []
+    actual = datetime.combine(date.today(), HORA_INICIO)
+    fin_dt = datetime.combine(date.today(), HORA_FIN)
+
+    while actual < fin_dt:
+        horas.append(actual.time())
+        actual += timedelta(minutes=PASO_MIN)
+
+    return horas
+
+
+def generar_horas_fin():
+    horas = []
+    actual = datetime.combine(date.today(), HORA_INICIO) + timedelta(minutes=PASO_MIN)
+    fin_dt = datetime.combine(date.today(), HORA_FIN)
+
+    while actual <= fin_dt:
+        horas.append(actual.time())
+        actual += timedelta(minutes=PASO_MIN)
+
+    return horas
+
+
+def hora_label(h):
+    return h.strftime("%H:%M")
+
+
+def es_horario_laboral(dt):
+    return dt.weekday() < 5 and HORA_INICIO <= dt.time() < HORA_FIN
+
+
+@st.cache_data(ttl=60 * 60 * 12)
+def obtener_feriados_google(year):
+    try:
+        resp = requests.get(GOOGLE_HOLIDAYS_ICS, timeout=8)
+        resp.raise_for_status()
+        txt = resp.text
+
+        eventos = {}
+        bloques = txt.split("BEGIN:VEVENT")
+
+        for b in bloques:
+            if "DTSTART" not in b:
+                continue
+
+            m_fecha = re.search(r"DTSTART(?:;VALUE=DATE)?:([0-9]{8})", b)
+            m_sum = re.search(r"SUMMARY:(.+)", b)
+
+            if not m_fecha:
+                continue
+
+            f = datetime.strptime(m_fecha.group(1), "%Y%m%d").date()
+
+            if f.year != year:
+                continue
+
+            nombre = m_sum.group(1).strip() if m_sum else "Feriado"
+            nombre = nombre.replace("\\,", ",").replace("\\;", ";")
+            eventos[f] = nombre
+
+        return eventos
+    except Exception:
+        return {}
+
+
+def obtener_no_laborables_manual(year):
+    try:
+        rows = run_query(
+            """
+            SELECT fecha, nombre, tipo
+            FROM calendario_no_laborable
+            WHERE activo = TRUE
+              AND pais = %s
+              AND EXTRACT(YEAR FROM fecha) = %s
+            ORDER BY fecha
+            """,
+            (PAIS_FERIADOS, year),
+        )
+
+        return {
+            pd.to_datetime(r["fecha"]).date(): {
+                "nombre": r["nombre"],
+                "tipo": r.get("tipo") or "manual",
+            }
+            for r in rows
+        }
+    except Exception:
+        return {}
+
+
+def obtener_no_laborables(year):
+    google = obtener_feriados_google(year)
+    manuales = obtener_no_laborables_manual(year)
+
+    data = {}
+
+    for f, nombre in google.items():
+        data[f] = {"nombre": nombre, "tipo": "google_calendar"}
+
+    for f, d in manuales.items():
+        data[f] = d
+
+    return data
+
+
+def es_no_laborable(fecha, no_laborables):
+    return fecha.weekday() >= 5 or fecha in no_laborables
+
+
+def nombre_no_laborable(fecha, no_laborables):
+    if fecha.weekday() == 5:
+        return "Sábado"
+    if fecha.weekday() == 6:
+        return "Domingo"
+    if fecha in no_laborables:
+        return no_laborables[fecha]["nombre"]
+    return ""
+
+
+def obtener_nutricionistas():
+    return run_query(
+        """
+        SELECT id_nutricionista,
+               nombre || ' ' || apellido AS nombre
+        FROM nutricionistas
+        WHERE estado = TRUE
+        ORDER BY apellido, nombre
+        """
+    )
+
+
+def selector_nutricionista(key="nutri_sel", label="Nutricionista"):
+    if rol == "administrador":
+        nutris = obtener_nutricionistas()
+
+        if not nutris:
+            st.info("No hay nutricionistas activos.")
+            st.stop()
+
+        opts = {n["nombre"]: n["id_nutricionista"] for n in nutris}
+        sel = st.selectbox(label, list(opts.keys()), key=key)
+        return opts[sel], sel
+
+    nombre = run_query(
+        """
+        SELECT nombre || ' ' || apellido AS nombre
+        FROM nutricionistas
+        WHERE id_nutricionista = %s
+        """,
+        (id_nutri,),
+    )
+
+    nombre_txt = nombre[0]["nombre"] if nombre else "Nutricionista"
+    st.markdown(f"**{label}:** {nombre_txt}")
+    return id_nutri, nombre_txt
+
+
+def obtener_sesiones(fecha_desde, fecha_hasta, estado="todos", id_nutricionista=None):
+    q = """
+        SELECT s.id_sesion,
+               s.id_contrato,
+               s.numero_sesion,
+               s.fecha_hora_original,
+               s.fecha_hora_programada,
+               s.fecha_hora_atencion,
+               s.modalidad,
+               s.estado,
+               s.estado_confirmacion,
+               s.contador_reprogramaciones,
+               p.nombre || ' ' || p.apellido AS paciente,
+               n.nombre || ' ' || n.apellido AS nutricionista,
+               pr.nombre AS programa
+        FROM sesiones s
+        JOIN contratos c ON s.id_contrato = c.id_contrato
+        JOIN pacientes p ON c.id_paciente = p.id_paciente
+        JOIN nutricionistas n ON s.id_nutricionista_prog = n.id_nutricionista
+        JOIN programas pr ON c.id_programa = pr.id_programa
+        WHERE DATE(s.fecha_hora_programada) BETWEEN %s AND %s
+    """
+
+    params = [fecha_desde, fecha_hasta]
+
+    if estado != "todos":
+        q += " AND s.estado = %s"
+        params.append(estado)
+
+    if id_nutricionista:
+        q += " AND s.id_nutricionista_prog = %s"
+        params.append(id_nutricionista)
+
+    q += " ORDER BY s.fecha_hora_programada"
+
+    return run_query(q, params)
+
+
+def obtener_slots(fecha_desde, fecha_hasta, id_nutricionista):
+    return run_query(
+        """
+        SELECT d.id_slot,
+               d.fecha_hora_inicio,
+               d.duracion_minutos,
+               d.estado,
+               d.id_sesion,
+               d.notas,
+               CASE
+                    WHEN d.id_sesion IS NOT NULL THEN p.nombre || ' ' || p.apellido
+                    ELSE NULL
+               END AS paciente
+        FROM disponibilidad d
+        LEFT JOIN sesiones s ON d.id_sesion = s.id_sesion
+        LEFT JOIN contratos c ON s.id_contrato = c.id_contrato
+        LEFT JOIN pacientes p ON c.id_paciente = p.id_paciente
+        WHERE d.id_nutricionista = %s
+          AND DATE(d.fecha_hora_inicio) BETWEEN %s AND %s
+        ORDER BY d.fecha_hora_inicio
+        """,
+        (id_nutricionista, fecha_desde, fecha_hasta),
+    )
+
+
+def obtener_slot_exacto(id_nutricionista, fecha_hora):
+    rows = run_query(
+        """
+        SELECT id_slot, estado, id_sesion
+        FROM disponibilidad
+        WHERE id_nutricionista = %s
+          AND fecha_hora_inicio = %s
+        LIMIT 1
+        """,
+        (id_nutricionista, fecha_hora),
+    )
+
+    return rows[0] if rows else None
+
+
+def upsert_disponibilidad(
+    id_nutricionista,
+    fecha_hora,
+    duracion,
+    estado,
+    notas=None,
+    id_sesion=None,
+):
+    run_command(
+        """
+        INSERT INTO disponibilidad
+            (id_nutricionista, fecha_hora_inicio, duracion_minutos, estado, notas, id_sesion)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (id_nutricionista, fecha_hora_inicio)
+        DO UPDATE SET
+            duracion_minutos = EXCLUDED.duracion_minutos,
+            estado = EXCLUDED.estado,
+            notas = EXCLUDED.notas,
+            id_sesion = EXCLUDED.id_sesion
+        """,
+        (id_nutricionista, fecha_hora, duracion, estado, notas, id_sesion),
+    )
+
+
+def limpiar_reserva_disponibilidad(id_sesion):
+    run_command(
+        """
+        DELETE FROM disponibilidad
+        WHERE id_sesion = %s
+        """,
+        (id_sesion,),
+    )
+
+
+def obtener_pacientes_para_reserva(id_nutricionista):
+    return run_query(
+        """
+        SELECT DISTINCT
+               p.id_paciente,
+               p.nombre || ' ' || p.apellido AS paciente,
+               c.id_contrato,
+               pr.nombre AS programa
+        FROM pacientes p
+        JOIN contratos c ON p.id_paciente = c.id_paciente
+        JOIN programas pr ON c.id_programa = pr.id_programa
+        WHERE c.estado = 'activo'
+          AND c.id_nutricionista = %s
+        ORDER BY paciente
+        """,
+        (id_nutricionista,),
+    )
+
+
+def obtener_sesiones_pendientes_contrato(id_contrato):
+    return run_query(
+        """
+        SELECT id_sesion,
+               numero_sesion,
+               fecha_hora_programada,
+               estado,
+               estado_confirmacion
+        FROM sesiones
+        WHERE id_contrato = %s
+          AND estado = 'programada'
+        ORDER BY numero_sesion, fecha_hora_programada
+        """,
+        (id_contrato,),
+    )
+
+
+def reservar_sesion(
+    id_nutricionista,
+    id_sesion,
+    fecha_hora,
+    modalidad,
+    duracion_minutos=30,
+    notas=None,
+):
+    run_command(
+        """
+        UPDATE sesiones
+        SET fecha_hora_programada = %s,
+            fecha_hora_original = COALESCE(fecha_hora_original, %s),
+            id_nutricionista_prog = %s,
+            modalidad = %s,
+            estado = 'programada',
+            estado_confirmacion = 'pendiente'
+        WHERE id_sesion = %s
+        """,
+        (fecha_hora, fecha_hora, id_nutricionista, modalidad, id_sesion),
+    )
+
+    limpiar_reserva_disponibilidad(id_sesion)
+
+    upsert_disponibilidad(
+        id_nutricionista=id_nutricionista,
+        fecha_hora=fecha_hora,
+        duracion=duracion_minutos,
+        estado="reservado",
+        notas=notas or "Turno reservado",
+        id_sesion=id_sesion,
+    )
+
+
+def registrar_reprogramacion_desde_agenda(
+    id_sesion,
+    nueva_fecha_hora,
+    modalidad_nueva,
+    motivo,
+    reprogramada_por="nutricionista",
+):
+    rows = run_query(
+        """
+        SELECT s.id_sesion,
+               s.id_contrato,
+               s.numero_sesion,
+               s.fecha_hora_programada,
+               s.modalidad,
+               s.id_nutricionista_prog,
+               COALESCE(MAX(sh.subnumero), 0) + 1 AS prox_subnumero
+        FROM sesiones s
+        LEFT JOIN sesiones_historial sh ON sh.id_sesion = s.id_sesion
+        WHERE s.id_sesion = %s
+        GROUP BY s.id_sesion, s.id_contrato, s.numero_sesion,
+                 s.fecha_hora_programada, s.modalidad, s.id_nutricionista_prog
+        """,
+        (id_sesion,),
+    )
+
+    if not rows:
+        raise ValueError("Sesión no encontrada.")
+
+    s = rows[0]
+
+    run_command(
+        """
+        INSERT INTO sesiones_historial
+            (id_sesion, id_contrato, numero_sesion, subnumero,
+             fecha_hora_anterior, fecha_hora_nueva,
+             modalidad_anterior, modalidad_nueva,
+             motivo, reprogramada_por, creado_por)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            id_sesion,
+            s["id_contrato"],
+            s["numero_sesion"],
+            s["prox_subnumero"],
+            s["fecha_hora_programada"],
+            nueva_fecha_hora,
+            s["modalidad"],
+            modalidad_nueva,
+            motivo,
+            reprogramada_por,
+            id_usuario,
+        ),
+    )
+
+    run_command(
+        """
+        UPDATE sesiones
+        SET fecha_hora_programada = %s,
+            modalidad = %s,
+            estado = 'programada',
+            estado_confirmacion = 'modificada',
+            contador_reprogramaciones = contador_reprogramaciones + 1,
+            motivo_reprogramacion = %s,
+            reprogramada_por = %s
+        WHERE id_sesion = %s
+        """,
+        (
+            nueva_fecha_hora,
+            modalidad_nueva,
+            motivo,
+            reprogramada_por,
+            id_sesion,
+        ),
+    )
+
+    run_command(
+        """
+        UPDATE contratos
+        SET reprogramaciones_usadas = reprogramaciones_usadas + 1,
+            fecha_ultima_reprogramacion = %s
+        WHERE id_contrato = %s
+        """,
+        (nueva_fecha_hora.date(), s["id_contrato"]),
+    )
+
+    limpiar_reserva_disponibilidad(id_sesion)
+
+    upsert_disponibilidad(
+        id_nutricionista=s["id_nutricionista_prog"],
+        fecha_hora=nueva_fecha_hora,
+        duracion=PASO_MIN,
+        estado="reservado",
+        notas=motivo or "Turno reprogramado",
+        id_sesion=id_sesion,
+    )
+
+
+def avanzar_mes(fecha_ref, delta):
+    mes = fecha_ref.month + delta
+    year = fecha_ref.year
+
+    if mes < 1:
+        mes = 12
+        year -= 1
+    elif mes > 12:
+        mes = 1
+        year += 1
+
+    return date(year, mes, 1)
+
+
+def render_calendario_mes(id_nutricionista, fecha_ref):
+    no_laborables = obtener_no_laborables(fecha_ref.year)
+
+    primer_dia = fecha_ref.replace(day=1)
+    ultimo_num = calendar.monthrange(fecha_ref.year, fecha_ref.month)[1]
+    ultimo_dia = fecha_ref.replace(day=ultimo_num)
+
+    slots = obtener_slots(primer_dia, ultimo_dia, id_nutricionista)
+
+    slots_por_dia = {}
+
+    for s in slots:
+        f = pd.to_datetime(s["fecha_hora_inicio"]).date()
+        slots_por_dia.setdefault(f, []).append(s)
+
+    meses = [
+        "",
+        "Enero",
+        "Febrero",
+        "Marzo",
+        "Abril",
+        "Mayo",
+        "Junio",
+        "Julio",
+        "Agosto",
+        "Septiembre",
+        "Octubre",
+        "Noviembre",
+        "Diciembre",
+    ]
+    dias_semana = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
+
+    primer_weekday = primer_dia.weekday()
+    cells = []
+
+    for _ in range(primer_weekday):
+        cells.append('<div class="cal-day empty"></div>')
+
+    for d in range(1, ultimo_num + 1):
+        f = date(fecha_ref.year, fecha_ref.month, d)
+        no_lab = es_no_laborable(f, no_laborables)
+        motivo = nombre_no_laborable(f, no_laborables)
+
+        clase = "blocked" if no_lab else ""
+
+        if f == hoy:
+            clase += " today"
+
+        pills = ""
+
+        if no_lab:
+            pills += f'<div class="holiday-label">{motivo}</div>'
+
+        for s in slots_por_dia.get(f, [])[:5]:
+            estado = s["estado"]
+            color = {
+                "disponible": COLOR_DISPONIBLE,
+                "reservado": COLOR_RESERVADO,
+                "bloqueado": COLOR_BLOQUEADO,
+            }.get(estado, COLOR_BLOQUEADO)
+
+            hora = pd.to_datetime(s["fecha_hora_inicio"]).strftime("%H:%M")
+            paciente = s.get("paciente") or ""
+            nota = s.get("notas") or ""
+
+            texto = f"{hora}"
+
+            if paciente:
+                texto += f" · {paciente[:12]}"
+            elif nota:
+                texto += f" · {nota[:12]}"
+
+            pills += f"""
+            <div class="slot-pill" style="background:{color};" title="{hora} · {estado}">
+                {texto}
+            </div>
+            """
+
+        cells.append(
+            f"""
+            <div class="cal-day {clase}">
+                <div class="cal-day-num">{d}</div>
+                {pills}
+            </div>
+            """
+        )
+
+    html = f"""
+    <style>
+    * {{
+        box-sizing: border-box;
+    }}
+    body {{
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: transparent;
+    }}
+    .cal-title {{
+        font-size: 18px;
+        font-weight: 700;
+        color: #111827;
+        margin-bottom: 16px;
+    }}
+    .cal-grid {{
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        gap: 6px;
+    }}
+    .dow {{
+        text-align: center;
+        color: #808080;
+        font-size: 12px;
+        font-weight: 700;
+        padding: 4px 0 8px;
+    }}
+    .cal-day {{
+        min-height: 92px;
+        border: 1px solid #00DC8E;
+        border-radius: 10px;
+        background: #D8FFF3;
+        padding: 7px;
+        overflow: hidden;
+    }}
+    .cal-day.empty {{
+        background: transparent;
+        border: none;
+    }}
+    .cal-day.blocked {{
+        background: #f3f4f6;
+        border-color: #d1d5db;
+    }}
+    .cal-day.today {{
+        border: 2px solid #00DC8E;
+    }}
+    .cal-day-num {{
+        font-size: 12px;
+        font-weight: 700;
+        color: #111827;
+        margin-bottom: 5px;
+    }}
+    .holiday-label {{
+        font-size: 10px;
+        color: #808080;
+        margin-bottom: 4px;
+        line-height: 1.2;
+    }}
+    .slot-pill {{
+        color: white;
+        font-size: 10px;
+        padding: 3px 5px;
+        border-radius: 6px;
+        margin-bottom: 3px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }}
+    .legend {{
+        display: flex;
+        gap: 18px;
+        margin-top: 14px;
+        flex-wrap: wrap;
+        font-size: 12px;
+        color: #555;
+    }}
+    .leg {{
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }}
+    .dot {{
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
+    }}
+    </style>
+
+    <div class="cal-title">{meses[fecha_ref.month]} {fecha_ref.year}</div>
+
+    <div class="cal-grid">
+        {''.join([f'<div class="dow">{d}</div>' for d in dias_semana])}
+        {''.join(cells)}
+    </div>
+
+    <div class="legend">
+        <div class="leg"><span class="dot" style="background:{COLOR_DISPONIBLE}"></span> Disponible</div>
+        <div class="leg"><span class="dot" style="background:{COLOR_RESERVADO}"></span> Reservado</div>
+        <div class="leg"><span class="dot" style="background:{COLOR_BLOQUEADO}"></span> Bloqueado</div>
+        <div class="leg"><span class="dot" style="background:{COLOR_NO_LABORABLE}; border:1px solid #d1d5db;"></span> No laborable</div>
+    </div>
+    """
+
+    filas = (primer_weekday + ultimo_num + 6) // 7
+    height = 70 + filas * 104 + 60
+    components.html(html, height=height, scrolling=False)
+
+
+def render_detalle_dia(id_nutricionista, fecha_sel):
+    no_laborables = obtener_no_laborables(fecha_sel.year)
+    slots = obtener_slots(fecha_sel, fecha_sel, id_nutricionista)
+
+    slots_por_hora = {
+        pd.to_datetime(s["fecha_hora_inicio"]).strftime("%H:%M"): s
+        for s in slots
+    }
+
+    st.markdown(f"**Detalle del día: {fecha_sel.strftime('%d/%m/%Y')}**")
+
+    if es_no_laborable(fecha_sel, no_laborables):
+        st.info(f"Día no laborable: {nombre_no_laborable(fecha_sel, no_laborables)}")
+        return
+
+    filas = []
+
+    for h in generar_horas_inicio():
+        h_txt = h.strftime("%H:%M")
+        slot = slots_por_hora.get(h_txt)
+
+        if slot:
+            estado = slot["estado"]
+            paciente = slot.get("paciente")
+            notas = slot.get("notas")
+
+            if estado == "reservado":
+                detalle = f"Reservado - {paciente or notas or 'sin paciente'}"
+            elif estado == "bloqueado":
+                detalle = f"Bloqueado - {notas or 'sin nota'}"
+            else:
+                detalle = "Disponible"
+
+            filas.append(
+                {
+                    "Hora": h_txt,
+                    "Estado": estado.capitalize(),
+                    "Detalle": detalle,
+                }
+            )
+        else:
+            filas.append(
+                {
+                    "Hora": h_txt,
+                    "Estado": "Disponible",
+                    "Detalle": "Disponible",
+                }
+            )
+
+    st.dataframe(
+        pd.DataFrame(filas),
+        use_container_width=True,
+        hide_index=True,
+        height=360,
+    )
+
+
 if rol == "administrador":
-    m1 = run_query("SELECT COUNT(*) AS n FROM sesiones WHERE DATE(fecha_hora_programada)=%s AND estado='programada'", (hoy,))
-    m2 = run_query("SELECT COUNT(*) AS n FROM sesiones WHERE DATE(fecha_hora_programada)=%s AND estado='atendida'", (hoy,))
-    m3 = run_query("SELECT COUNT(*) AS n FROM sesiones WHERE DATE(fecha_hora_programada) BETWEEN %s AND %s AND estado='programada'", (hoy, hoy+timedelta(days=7)))
-    m4 = run_query("SELECT COUNT(DISTINCT id_nutricionista_prog) AS n FROM sesiones WHERE DATE(fecha_hora_programada)=%s", (hoy,))
+    m1 = run_query(
+        "SELECT COUNT(*) AS n FROM sesiones WHERE DATE(fecha_hora_programada)=%s AND estado='programada'",
+        (hoy,),
+    )
+    m2 = run_query(
+        "SELECT COUNT(*) AS n FROM sesiones WHERE DATE(fecha_hora_programada)=%s AND estado='atendida'",
+        (hoy,),
+    )
+    m3 = run_query(
+        """
+        SELECT COUNT(*) AS n
+        FROM sesiones
+        WHERE DATE(fecha_hora_programada) BETWEEN %s AND %s
+          AND estado='programada'
+        """,
+        (hoy, hoy + timedelta(days=7)),
+    )
+    m4 = run_query(
+        "SELECT COUNT(DISTINCT id_nutricionista_prog) AS n FROM sesiones WHERE DATE(fecha_hora_programada)=%s",
+        (hoy,),
+    )
 else:
-    m1 = run_query("SELECT COUNT(*) AS n FROM sesiones WHERE DATE(fecha_hora_programada)=%s AND estado='programada' AND id_nutricionista_prog=%s", (hoy, id_nutri))
-    m2 = run_query("SELECT COUNT(*) AS n FROM sesiones WHERE DATE(fecha_hora_programada)=%s AND estado='atendida' AND id_nutricionista_prog=%s", (hoy, id_nutri))
-    m3 = run_query("SELECT COUNT(*) AS n FROM sesiones WHERE DATE(fecha_hora_programada) BETWEEN %s AND %s AND estado='programada' AND id_nutricionista_prog=%s", (hoy, hoy+timedelta(days=7), id_nutri))
-    m4 = run_query("SELECT COUNT(*) AS n FROM sesiones WHERE DATE(fecha_hora_programada)=%s AND estado='ausente' AND id_nutricionista_prog=%s", (hoy, id_nutri))
-    # Turnos pendientes de confirmar
-    turnos_pend = run_query("""
-        SELECT COUNT(*) AS n FROM sesiones
-        WHERE id_nutricionista_prog=%s AND numero_sesion=1
-        AND estado_confirmacion='pendiente'
-    """, (id_nutri,))
-    if turnos_pend and turnos_pend[0]["n"] > 0:
-        n = turnos_pend[0]["n"]
-        if st.warning(f"Tenés **{n}** turno(s) de primera sesión pendiente(s) de confirmar."):
-            pass
-        # Click en la notificación lleva al tab confirmar turnos
-        if st.button("→ Ir a confirmar turnos", key="btn_goto_conf"):
-            st.session_state["agenda_tab"] = "confirmar"
-            st.rerun()
+    m1 = run_query(
+        """
+        SELECT COUNT(*) AS n
+        FROM sesiones
+        WHERE DATE(fecha_hora_programada)=%s
+          AND estado='programada'
+          AND id_nutricionista_prog=%s
+        """,
+        (hoy, id_nutri),
+    )
+    m2 = run_query(
+        """
+        SELECT COUNT(*) AS n
+        FROM sesiones
+        WHERE DATE(fecha_hora_programada)=%s
+          AND estado='atendida'
+          AND id_nutricionista_prog=%s
+        """,
+        (hoy, id_nutri),
+    )
+    m3 = run_query(
+        """
+        SELECT COUNT(*) AS n
+        FROM sesiones
+        WHERE DATE(fecha_hora_programada) BETWEEN %s AND %s
+          AND estado='programada'
+          AND id_nutricionista_prog=%s
+        """,
+        (hoy, hoy + timedelta(days=7), id_nutri),
+    )
+    m4 = run_query(
+        """
+        SELECT COUNT(*) AS n
+        FROM sesiones
+        WHERE DATE(fecha_hora_programada)=%s
+          AND estado='ausente'
+          AND id_nutricionista_prog=%s
+        """,
+        (hoy, id_nutri),
+    )
 
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("Pendientes hoy",  m1[0]["n"])
-col2.metric("Realizadas hoy",  m2[0]["n"])
-col3.metric("Esta semana",     m3[0]["n"])
-col4.metric("Nutricionistas hoy" if rol=="administrador" else "Ausentes hoy", m4[0]["n"])
+col1.metric("Pendientes hoy", safe_int(m1[0]["n"] if m1 else 0))
+col2.metric("Realizadas hoy", safe_int(m2[0]["n"] if m2 else 0))
+col3.metric("Esta semana", safe_int(m3[0]["n"] if m3 else 0))
+col4.metric(
+    "Nutricionistas hoy" if rol == "administrador" else "Ausentes hoy",
+    safe_int(m4[0]["n"] if m4 else 0),
+)
 
 st.markdown("---")
 
-# ── TABS ──
-tab_names_admin = ["Hoy", "Por fecha", "Realizadas", "Canceladas/Ausentes", "Disponibilidad", "Permisos / Reasignaciones"]
-tab_names_nutri = ["Hoy", "Por fecha", "Realizadas", "Canceladas/Ausentes", "Disponibilidad", "Confirmar turnos"]
 
 if rol == "administrador":
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(tab_names_admin)
+    tab_hoy, tab_sesiones, tab_disp, tab_permisos = st.tabs(
+        ["Hoy", "Sesiones", "Disponibilidad", "Permisos / Reasignaciones"]
+    )
 else:
-    tab1, tab2, tab3, tab4, tab5, tab_conf = st.tabs(tab_names_nutri)
-    tab6 = None
+    tab_hoy, tab_sesiones, tab_disp, tab_turnos = st.tabs(
+        ["Hoy", "Sesiones", "Disponibilidad", "Turnos pendientes"]
+    )
 
-# ═══════════════════════════════
-# TAB 1 — HOY
-# ═══════════════════════════════
-with tab1:
+
+with tab_hoy:
     st.subheader(f"Sesiones del {hoy.strftime('%d/%m/%Y')}")
-    if rol == "administrador":
-        sesiones = run_query("""
-            SELECT s.id_sesion, s.numero_sesion, s.fecha_hora_programada,
-                   s.modalidad, s.estado, s.contador_reprogramaciones,
-                   p.nombre||' '||p.apellido AS paciente,
-                   n.nombre||' '||n.apellido AS nutricionista,
-                   pr.nombre AS programa
-            FROM sesiones s
-            JOIN contratos c      ON s.id_contrato=c.id_contrato
-            JOIN pacientes p      ON c.id_paciente=p.id_paciente
-            JOIN nutricionistas n ON s.id_nutricionista_prog=n.id_nutricionista
-            JOIN programas pr     ON c.id_programa=pr.id_programa
-            WHERE DATE(s.fecha_hora_programada)=%s
-            AND s.estado IN ('programada','atendida','ausente')
-            ORDER BY s.fecha_hora_programada
-        """, (hoy,))
-    else:
-        sesiones = run_query("""
-            SELECT s.id_sesion, s.numero_sesion, s.fecha_hora_programada,
-                   s.modalidad, s.estado, s.contador_reprogramaciones,
-                   p.nombre||' '||p.apellido AS paciente,
-                   n.nombre||' '||n.apellido AS nutricionista,
-                   pr.nombre AS programa
-            FROM sesiones s
-            JOIN contratos c      ON s.id_contrato=c.id_contrato
-            JOIN pacientes p      ON c.id_paciente=p.id_paciente
-            JOIN nutricionistas n ON s.id_nutricionista_prog=n.id_nutricionista
-            JOIN programas pr     ON c.id_programa=pr.id_programa
-            WHERE DATE(s.fecha_hora_programada)=%s
-            AND s.id_nutricionista_prog=%s
-            AND s.estado IN ('programada','atendida','ausente')
-            ORDER BY s.fecha_hora_programada
-        """, (hoy, id_nutri))
 
-    if not sesiones:
+    sesiones_hoy = obtener_sesiones(
+        hoy,
+        hoy,
+        estado="todos",
+        id_nutricionista=None if rol == "administrador" else id_nutri,
+    )
+
+    sesiones_hoy = [
+        s for s in sesiones_hoy
+        if s["estado"] in ("programada", "atendida", "ausente", "cancelada")
+    ]
+
+    if not sesiones_hoy:
         st.info("No hay sesiones para hoy.")
     else:
-        for s in sesiones:
-            hora  = str(s["fecha_hora_programada"])[11:16]
-            icono = {"programada":"🟡","atendida":"🟢","ausente":"🔴"}.get(s["estado"],"⚪")
+        for s in sesiones_hoy:
+            hora = pd.to_datetime(s["fecha_hora_programada"]).strftime("%H:%M")
+            icono = {
+                "programada": "🟡",
+                "atendida": "🟢",
+                "ausente": "🔴",
+                "cancelada": "⚫",
+            }.get(s["estado"], "⚪")
+
             with st.container(border=True):
-                col1, col2, col3 = st.columns([3,2,2])
-                with col1:
+                c1, c2, c3 = st.columns([3, 2, 2])
+
+                with c1:
                     st.markdown(f"{icono} **{hora} — {s['paciente']}**")
                     st.caption(f"Sesión #{s['numero_sesion']} · {s['programa']} · {s['modalidad']}")
                     if rol == "administrador":
                         st.caption(f"Nutricionista: {s['nutricionista']}")
-                with col2:
+
+                with c2:
+                    etiqueta_conf = (
+                        "reprogramada"
+                        if s.get("estado_confirmacion") == "modificada"
+                        else s.get("estado_confirmacion")
+                    )
                     st.markdown(f"**Estado:** {s['estado'].capitalize()}")
-                    if s["contador_reprogramaciones"] > 0:
-                        veces = "vez" if s["contador_reprogramaciones"] == 1 else "veces"
-                        st.caption(f"Reprogramada {s['contador_reprogramaciones']} {veces}")
-                with col3:
+                    if etiqueta_conf:
+                        st.caption(f"Turno: {etiqueta_conf}")
+
+                with c3:
                     if s["estado"] == "programada":
                         ca, cb = st.columns(2)
+
                         with ca:
-                            if st.button("✅", key=f"real_{s['id_sesion']}", use_container_width=True, help="Marcar atendida"):
-                                run_command("UPDATE sesiones SET estado='atendida', fecha_hora_atencion=NOW(), id_nutricionista_aten=%s WHERE id_sesion=%s", (id_nutri, s["id_sesion"]))
+                            if st.button(
+                                "Atendida",
+                                key=f"real_{s['id_sesion']}",
+                                use_container_width=True,
+                                type="primary",
+                            ):
+                                run_command(
+                                    """
+                                    UPDATE sesiones
+                                    SET estado='atendida',
+                                        fecha_hora_atencion=NOW(),
+                                        id_nutricionista_aten=%s
+                                    WHERE id_sesion=%s
+                                    """,
+                                    (id_nutri, s["id_sesion"]),
+                                )
                                 st.rerun()
+
                         with cb:
-                            if st.button("❌", key=f"aus_{s['id_sesion']}", use_container_width=True, help="Marcar ausente"):
-                                run_command("UPDATE sesiones SET estado='ausente' WHERE id_sesion=%s", (s["id_sesion"],))
+                            if st.button(
+                                "Ausente",
+                                key=f"aus_{s['id_sesion']}",
+                                use_container_width=True,
+                            ):
+                                run_command(
+                                    "UPDATE sesiones SET estado='ausente' WHERE id_sesion=%s",
+                                    (s["id_sesion"],),
+                                )
                                 st.rerun()
 
-# ═══════════════════════════════
-# TAB 2 — POR FECHA
-# ═══════════════════════════════
-with tab2:
-    col1, col2 = st.columns(2)
-    with col1:
-        f_desde = st.date_input("Desde", value=hoy, key="ag_desde")
-    with col2:
-        f_hasta = st.date_input("Hasta", value=hoy+timedelta(days=14), key="ag_hasta")
-    filtro_e = st.selectbox("Estado", ["todos","programada","atendida","ausente","cancelada"], key="ag_est")
+
+with tab_sesiones:
+    st.subheader("Consulta de sesiones")
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        f_desde = st.date_input("Desde", value=hoy, key="ses_desde")
+
+    with c2:
+        f_hasta = st.date_input("Hasta", value=hoy + timedelta(days=14), key="ses_hasta")
+
+    with c3:
+        estado_sel = st.selectbox(
+            "Estado",
+            ["todos", "programada", "atendida", "ausente", "cancelada"],
+            key="ses_estado",
+        )
+
+    id_filtro = None
 
     if rol == "administrador":
-        nutris = run_query("SELECT id_nutricionista, nombre||' '||apellido AS nombre FROM nutricionistas WHERE estado=TRUE ORDER BY apellido")
-        nutr_opts = {"Todas": None}
-        nutr_opts.update({n["nombre"]: n["id_nutricionista"] for n in nutris})
-        nutr_sel  = st.selectbox("Nutricionista", list(nutr_opts.keys()), key="ag_nutri")
-        id_filtro = nutr_opts[nutr_sel]
-        q = """SELECT s.numero_sesion, s.fecha_hora_programada, s.modalidad, s.estado,
-                   s.contador_reprogramaciones,
-                   p.nombre||' '||p.apellido AS paciente,
-                   n.nombre||' '||n.apellido AS nutricionista, pr.nombre AS programa
-            FROM sesiones s
-            JOIN contratos c      ON s.id_contrato=c.id_contrato
-            JOIN pacientes p      ON c.id_paciente=p.id_paciente
-            JOIN nutricionistas n ON s.id_nutricionista_prog=n.id_nutricionista
-            JOIN programas pr     ON c.id_programa=pr.id_programa
-            WHERE DATE(s.fecha_hora_programada) BETWEEN %s AND %s"""
-        params = [f_desde, f_hasta]
-        if filtro_e != "todos": q += " AND s.estado=%s"; params.append(filtro_e)
-        if id_filtro: q += " AND s.id_nutricionista_prog=%s"; params.append(id_filtro)
-        q += " ORDER BY s.fecha_hora_programada"
-        sesiones2 = run_query(q, params)
+        nutris = obtener_nutricionistas()
+        opts = {"Todas": None}
+        opts.update({n["nombre"]: n["id_nutricionista"] for n in nutris})
+        nutr_sel = st.selectbox("Nutricionista", list(opts.keys()), key="ses_nutri")
+        id_filtro = opts[nutr_sel]
     else:
-        q = """SELECT s.numero_sesion, s.fecha_hora_programada, s.modalidad, s.estado,
-                   s.contador_reprogramaciones,
-                   p.nombre||' '||p.apellido AS paciente,
-                   n.nombre||' '||n.apellido AS nutricionista, pr.nombre AS programa
-            FROM sesiones s
-            JOIN contratos c      ON s.id_contrato=c.id_contrato
-            JOIN pacientes p      ON c.id_paciente=p.id_paciente
-            JOIN nutricionistas n ON s.id_nutricionista_prog=n.id_nutricionista
-            JOIN programas pr     ON c.id_programa=pr.id_programa
-            WHERE DATE(s.fecha_hora_programada) BETWEEN %s AND %s AND s.id_nutricionista_prog=%s"""
-        params = [f_desde, f_hasta, id_nutri]
-        if filtro_e != "todos": q += " AND s.estado=%s"; params.append(filtro_e)
-        q += " ORDER BY s.fecha_hora_programada"
-        sesiones2 = run_query(q, params)
+        id_filtro = id_nutri
 
-    if not sesiones2:
-        st.info("No hay sesiones para ese período.")
+    sesiones = obtener_sesiones(
+        f_desde,
+        f_hasta,
+        estado=estado_sel,
+        id_nutricionista=id_filtro,
+    )
+
+    if not sesiones:
+        st.info("No hay sesiones para los filtros seleccionados.")
     else:
-        iconos = {"programada":"🟡","atendida":"🟢","ausente":"🔴","cancelada":"⚫"}
-        df = pd.DataFrame(sesiones2)
-        df["fecha_hora_programada"] = pd.to_datetime(df["fecha_hora_programada"]).dt.strftime("%d/%m/%Y %H:%M")
-        df[""] = df["estado"].map(lambda x: iconos.get(x,"⚪"))
-        df = df.rename(columns={"numero_sesion":"N°","fecha_hora_programada":"Fecha","modalidad":"Modalidad","estado":"Estado","paciente":"Paciente","nutricionista":"Nutricionista","programa":"Programa","contador_reprogramaciones":"Reprog."})
-        cols = ["","Fecha","Paciente","N°","Programa","Modalidad","Estado","Reprog."]
-        if rol == "administrador": cols.insert(4,"Nutricionista")
-        st.dataframe(df[cols], use_container_width=True)
-        st.caption(f"Total: {len(sesiones2)} sesiones")
+        df = pd.DataFrame(sesiones)
+        df["Fecha"] = pd.to_datetime(df["fecha_hora_programada"]).dt.strftime("%d/%m/%Y %H:%M")
+        df["Estado"] = df["estado"].map(
+            {
+                "programada": "🟡 Programada",
+                "atendida": "🟢 Atendida",
+                "ausente": "🔴 Ausente",
+                "cancelada": "⚫ Cancelada",
+            }
+        ).fillna(df["estado"])
+        df["Turno"] = df["estado_confirmacion"].replace({"modificada": "reprogramada"})
 
-# ═══════════════════════════════
-# TAB 3 — REALIZADAS
-# ═══════════════════════════════
-with tab3:
-    col1, col2 = st.columns(2)
-    with col1: r_desde = st.date_input("Desde", value=hoy-timedelta(days=30), key="r_desde")
-    with col2: r_hasta = st.date_input("Hasta", value=hoy, key="r_hasta")
-    if rol == "administrador":
-        realizadas = run_query("""SELECT s.numero_sesion, s.fecha_hora_programada, s.fecha_hora_atencion,
-                   s.modalidad, p.nombre||' '||p.apellido AS paciente,
-                   n.nombre||' '||n.apellido AS nutricionista, pr.nombre AS programa
-            FROM sesiones s JOIN contratos c ON s.id_contrato=c.id_contrato
-            JOIN pacientes p ON c.id_paciente=p.id_paciente
-            JOIN nutricionistas n ON s.id_nutricionista_prog=n.id_nutricionista
-            JOIN programas pr ON c.id_programa=pr.id_programa
-            WHERE s.estado='atendida' AND DATE(s.fecha_hora_atencion) BETWEEN %s AND %s
-            ORDER BY s.fecha_hora_atencion DESC""", (r_desde, r_hasta))
-    else:
-        realizadas = run_query("""SELECT s.numero_sesion, s.fecha_hora_programada, s.fecha_hora_atencion,
-                   s.modalidad, p.nombre||' '||p.apellido AS paciente,
-                   n.nombre||' '||n.apellido AS nutricionista, pr.nombre AS programa
-            FROM sesiones s JOIN contratos c ON s.id_contrato=c.id_contrato
-            JOIN pacientes p ON c.id_paciente=p.id_paciente
-            JOIN nutricionistas n ON s.id_nutricionista_prog=n.id_nutricionista
-            JOIN programas pr ON c.id_programa=pr.id_programa
-            WHERE s.estado='atendida' AND s.id_nutricionista_prog=%s
-            AND DATE(s.fecha_hora_atencion) BETWEEN %s AND %s
-            ORDER BY s.fecha_hora_atencion DESC""", (id_nutri, r_desde, r_hasta))
-    if not realizadas:
-        st.info("No hay sesiones realizadas en ese período.")
-    else:
-        df_r = pd.DataFrame(realizadas)
-        df_r["fecha_hora_programada"] = pd.to_datetime(df_r["fecha_hora_programada"]).dt.strftime("%d/%m/%Y %H:%M")
-        df_r["fecha_hora_atencion"]   = pd.to_datetime(df_r["fecha_hora_atencion"]).dt.strftime("%d/%m/%Y %H:%M")
-        df_r = df_r.rename(columns={"numero_sesion":"N°","fecha_hora_programada":"Programada","fecha_hora_atencion":"Atendida","modalidad":"Modalidad","paciente":"Paciente","nutricionista":"Nutricionista","programa":"Programa"})
-        cols_r = ["N°","Paciente","Programada","Atendida","Modalidad","Programa"]
-        if rol == "administrador": cols_r.append("Nutricionista")
-        st.dataframe(df_r[cols_r], use_container_width=True)
-        st.caption(f"Total: {len(realizadas)}")
+        df = df.rename(
+            columns={
+                "numero_sesion": "N° sesión",
+                "paciente": "Paciente",
+                "nutricionista": "Nutricionista",
+                "programa": "Programa",
+                "modalidad": "Modalidad",
+            }
+        )
 
-# ═══════════════════════════════
-# TAB 4 — CANCELADAS / AUSENTES
-# ═══════════════════════════════
-with tab4:
-    if rol == "administrador":
-        canceladas = run_query("""SELECT s.numero_sesion, s.fecha_hora_programada, s.estado, s.motivo_reprogramacion,
-                   p.nombre||' '||p.apellido AS paciente, n.nombre||' '||n.apellido AS nutricionista, pr.nombre AS programa
-            FROM sesiones s JOIN contratos c ON s.id_contrato=c.id_contrato
-            JOIN pacientes p ON c.id_paciente=p.id_paciente
-            JOIN nutricionistas n ON s.id_nutricionista_prog=n.id_nutricionista
-            JOIN programas pr ON c.id_programa=pr.id_programa
-            WHERE s.estado IN ('cancelada','ausente') ORDER BY s.fecha_hora_programada DESC LIMIT 100""")
-    else:
-        canceladas = run_query("""SELECT s.numero_sesion, s.fecha_hora_programada, s.estado, s.motivo_reprogramacion,
-                   p.nombre||' '||p.apellido AS paciente, n.nombre||' '||n.apellido AS nutricionista, pr.nombre AS programa
-            FROM sesiones s JOIN contratos c ON s.id_contrato=c.id_contrato
-            JOIN pacientes p ON c.id_paciente=p.id_paciente
-            JOIN nutricionistas n ON s.id_nutricionista_prog=n.id_nutricionista
-            JOIN programas pr ON c.id_programa=pr.id_programa
-            WHERE s.estado IN ('cancelada','ausente') AND s.id_nutricionista_prog=%s
-            ORDER BY s.fecha_hora_programada DESC LIMIT 100""", (id_nutri,))
-    if not canceladas:
-        st.info("No hay cancelaciones ni ausencias.")
-    else:
-        df_c = pd.DataFrame(canceladas)
-        df_c["fecha_hora_programada"] = pd.to_datetime(df_c["fecha_hora_programada"]).dt.strftime("%d/%m/%Y %H:%M")
-        df_c["estado"] = df_c["estado"].map({"ausente":"🔴 Ausente","cancelada":"⚫ Cancelada"})
-        df_c = df_c.rename(columns={"numero_sesion":"N°","fecha_hora_programada":"Fecha","estado":"Estado","motivo_reprogramacion":"Motivo","paciente":"Paciente","nutricionista":"Nutricionista","programa":"Programa"})
-        cols_c = ["N°","Paciente","Fecha","Estado","Motivo","Programa"]
-        if rol == "administrador": cols_c.append("Nutricionista")
-        st.dataframe(df_c[cols_c], use_container_width=True)
+        cols = ["Fecha", "Paciente", "N° sesión", "Programa", "Modalidad", "Estado", "Turno"]
 
-# ═══════════════════════════════
-# TAB 5 — DISPONIBILIDAD CON CALENDARIO
-# ═══════════════════════════════
-with tab5:
-    if rol == "administrador":
-        nutris_d    = run_query("SELECT id_nutricionista, nombre||' '||apellido AS nombre FROM nutricionistas WHERE estado=TRUE ORDER BY apellido")
-        nutr_d_opts = {n["nombre"]: n["id_nutricionista"] for n in nutris_d}
-        nutr_d_sel  = st.selectbox("Nutricionista", list(nutr_d_opts.keys()), key="disp_nutri")
-        id_disp     = nutr_d_opts[nutr_d_sel]
-    else:
-        id_disp     = id_nutri
-        nutr_nombre = run_query("SELECT nombre||' '||apellido AS n FROM nutricionistas WHERE id_nutricionista=%s", (id_nutri,))
-        st.markdown(f"Disponibilidad de: **{nutr_nombre[0]['n'] if nutr_nombre else ''}**")
+        if rol == "administrador":
+            cols.insert(2, "Nutricionista")
 
-    # Programas del nutricionista para conocer duraciones
-    progs_nutri = run_query("""
-        SELECT DISTINCT pr.nombre, 
-               COALESCE(pr.duracion_sesion_minutos, 60) AS duracion_min
-        FROM programa_nutricionistas pn
-        JOIN programas pr ON pn.id_programa=pr.id_programa
-        WHERE pn.id_nutricionista=%s AND pn.activo=TRUE
-        ORDER BY pr.nombre
-    """, (id_disp,))
+        st.dataframe(df[cols], use_container_width=True, hide_index=True, height=420)
+        st.caption(f"Total: {len(df)} sesiones")
 
-    if progs_nutri:
-        st.caption("Duraciones según programas asignados: " + 
-                   " · ".join([f"**{p['nombre']}**: {p['duracion_min']} min" for p in progs_nutri]))
 
-    dtab1, dtab2 = st.tabs(["Calendario", "Cargar slots"])
+with tab_disp:
+    st.subheader("Disponibilidad")
+
+    id_disp, nombre_disp = selector_nutricionista(key="disp_nutri")
+
+    dtab1, dtab2 = st.tabs(["Calendario", "Reservar / bloquear horarios"])
 
     with dtab1:
-        # Cargar slots del mes actual
-        import calendar
-        mes_actual = hoy.replace(day=1)
-        ultimo_dia = calendar.monthrange(hoy.year, hoy.month)[1]
-        fin_mes    = hoy.replace(day=ultimo_dia)
+        if "agenda_mes_ref" not in st.session_state:
+            st.session_state["agenda_mes_ref"] = hoy.replace(day=1)
 
-        slots_mes = run_query("""
-            SELECT d.id_slot, d.fecha_hora_inicio, d.duracion_minutos, d.estado,
-                   CASE WHEN d.id_sesion IS NOT NULL THEN p.nombre||' '||p.apellido ELSE NULL END AS paciente
-            FROM disponibilidad d
-            LEFT JOIN sesiones s  ON d.id_sesion=s.id_sesion
-            LEFT JOIN contratos c ON s.id_contrato=c.id_contrato
-            LEFT JOIN pacientes p ON c.id_paciente=p.id_paciente
-            WHERE d.id_nutricionista=%s
-            AND DATE(d.fecha_hora_inicio) BETWEEN %s AND %s
-            ORDER BY d.fecha_hora_inicio
-        """, (id_disp, mes_actual, fin_mes))
+        c1, c2, c3 = st.columns([1, 2, 1])
 
-        # Construir datos para el calendario
-        slots_json = []
-        for s in slots_mes:
-            fh  = s["fecha_hora_inicio"]
-            dia = int(str(fh)[:10].split("-")[2])
-            hora = str(fh)[11:16]
-            color = {"disponible":"#00DC8E","reservado":"#8C52FF","bloqueado":"#808080"}.get(s["estado"],"#808080")
-            slots_json.append({
-                "dia": dia, "hora": hora,
-                "duracion": s["duracion_minutos"],
-                "estado": s["estado"],
-                "color": color,
-                "paciente": s["paciente"] or "",
-                "id": s["id_slot"]
-            })
-
-        meses_es = ["","Enero","Febrero","Marzo","Abril","Mayo","Junio",
-                    "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
-        dias_semana = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"]
-        primer_dia_semana = calendar.monthrange(hoy.year, hoy.month)[0]  # 0=lunes
-        # Ajustar: calendar.monthrange devuelve 0=lunes, queremos 0=domingo
-        primer_dia_semana = (primer_dia_semana + 1) % 7
-
-        cal_html = f"""
-<style>
-  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{ font-family: system-ui, sans-serif; background: transparent; }}
-  .cal-header {{ display: flex; justify-content: space-between; align-items: center; 
-                  padding: 8px 0 12px; }}
-  .cal-title {{ font-size: 16px; font-weight: 500; color: #1a1a1a; }}
-  .cal-grid {{ display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }}
-  .cal-dow {{ text-align: center; font-size: 11px; font-weight: 500; 
-               color: #888; padding: 4px 0 8px; }}
-  .cal-day {{ min-height: 72px; border: 1px solid #e8e6e0; border-radius: 6px;
-               padding: 4px; background: #fafaf8; }}
-  .cal-day.empty {{ background: transparent; border-color: transparent; }}
-  .cal-day.today {{ border-color: #1D9E75; background: #f0faf7; }}
-  .cal-day-num {{ font-size: 12px; font-weight: 500; color: #555; margin-bottom: 3px; }}
-  .cal-day.today .cal-day-num {{ color: #1D9E75; font-weight: 700; }}
-  .slot-pill {{ font-size: 10px; border-radius: 3px; padding: 2px 4px; 
-                margin-bottom: 2px; cursor: pointer; white-space: nowrap;
-                overflow: hidden; text-overflow: ellipsis; color: white;
-                line-height: 1.4; }}
-  .slot-pill:hover {{ opacity: 0.85; }}
-  .legend {{ display: flex; gap: 12px; margin-top: 10px; flex-wrap: wrap; }}
-  .leg-item {{ display: flex; align-items: center; gap: 4px; font-size: 11px; color: #666; }}
-  .leg-dot {{ width: 10px; height: 10px; border-radius: 2px; }}
-  .tooltip {{ position: fixed; background: #1a1a1a; color: white; padding: 6px 10px;
-               border-radius: 6px; font-size: 11px; pointer-events: none;
-               display: none; z-index: 999; max-width: 200px; line-height: 1.5; }}
-</style>
-
-<div class="cal-header">
-  <span class="cal-title">{meses_es[hoy.month]} {hoy.year}</span>
-  <span style="font-size:12px;color:#888">{len(slots_mes)} slots este mes</span>
-</div>
-
-<div class="cal-grid">
-  {''.join([f'<div class="cal-dow">{d}</div>' for d in dias_semana])}
-  {''.join([f'<div class="cal-day empty"></div>' for _ in range(primer_dia_semana)])}
-  {''.join([
-    f'''<div class="cal-day {'today' if d == hoy.day else ''}">
-      <div class="cal-day-num">{d}</div>
-      {''.join([
-        f'<div class="slot-pill" style="background:{s["color"]}"'
-        f' onmouseenter="showTip(event,\'{s["hora"]} · {s["duracion"]}min'
-        f'{"· " + s["paciente"] if s["paciente"] else ""}\')"'
-        f' onmouseleave="hideTip()">'
-        f'{s["hora"]}'
-        f'{" · " + s["paciente"][:10] if s["paciente"] else ""}'
-        f'</div>'
-        for s in slots_json if s["dia"] == d
-      ])}
-    </div>'''
-    for d in range(1, ultimo_dia + 1)
-  ])}
-</div>
-
-<div class="legend">
-  <div class="leg-item"><div class="leg-dot" style="background:#00DC8E"></div> Disponible</div>
-  <div class="leg-item"><div class="leg-dot" style="background:#8C52FF"></div> Reservado</div>
-  <div class="leg-item"><div class="leg-dot" style="background:#808080"></div> Bloqueado</div>
-</div>
-
-<div class="tooltip" id="tip"></div>
-<script>
-function showTip(e, text) {{
-  const t = document.getElementById('tip');
-  t.textContent = text;
-  t.style.display = 'block';
-  t.style.left = (e.clientX + 10) + 'px';
-  t.style.top  = (e.clientY - 30) + 'px';
-}}
-function hideTip() {{
-  document.getElementById('tip').style.display = 'none';
-}}
-</script>
-"""
-        # Calcular altura del calendario
-        filas = (primer_dia_semana + ultimo_dia + 6) // 7
-        cal_height = 40 + 24 + (filas * 80) + 60
-        components.html(cal_html, height=cal_height, scrolling=False)
-
-        # Gestión de slots debajo del calendario
-        if slots_mes:
-            with st.expander("Cambiar estado de un slot"):
-                slots_mod = [s for s in slots_mes if s["estado"] != "reservado"]
-                if slots_mod:
-                    opts_sl = {f"{str(s['fecha_hora_inicio'])[:16]} ({s['estado']})": s["id_slot"] for s in slots_mod}
-                    sel_sl  = st.selectbox("Slot", list(opts_sl.keys()), key="sl_sel")
-                    nuevo_e = st.selectbox("Nuevo estado", ["disponible","bloqueado"], key="sl_nuevo")
-                    if st.button("Actualizar", key="btn_sl"):
-                        run_command("UPDATE disponibilidad SET estado=%s WHERE id_slot=%s", (nuevo_e, opts_sl[sel_sl]))
-                        st.success("Actualizado.")
-                        st.rerun()
-
-    with dtab2:
-        st.subheader("Cargar disponibilidad")
-
-        # Obtener duraciones disponibles para este nutricionista
-        durs_disponibles = run_query("""
-            SELECT DISTINCT COALESCE(pr.duracion_sesion_minutos, 60) AS duracion_min, pr.nombre
-            FROM programa_nutricionistas pn
-            JOIN programas pr ON pn.id_programa=pr.id_programa
-            WHERE pn.id_nutricionista=%s AND pn.activo=TRUE
-            ORDER BY duracion_min
-        """, (id_disp,))
-
-        modo = st.radio("Modo", ["Slot individual","Múltiples slots en un día"], horizontal=True, key="modo_slot")
-
-        if modo == "Slot individual":
-            col1, col2 = st.columns(2)
-            with col1:
-                f_slot = st.date_input("Fecha", value=hoy, key="fs_ind")
-                h_slot = st.time_input("Hora (entre 9:00 y 18:00)", key="hs_ind")
-            with col2:
-                if durs_disponibles:
-                    dur_opts = {f"{d['duracion_min']} min ({d['nombre']})": d["duracion_min"] for d in durs_disponibles}
-                    dur_sel  = st.selectbox("Duración según programa", list(dur_opts.keys()), key="dur_prog")
-                    dur_sl   = dur_opts[dur_sel]
-                else:
-                    dur_sl = st.number_input("Duración (min)", min_value=15, max_value=180, value=60, step=15, key="dur_ind")
-                notas_sl = st.text_input("Notas", key="notas_ind")
-
-            if st.button("Agregar slot", use_container_width=True, key="btn_add_ind"):
-                fh = datetime.combine(f_slot, h_slot)
-                if h_slot.hour < 9 or h_slot.hour >= 18:
-                    st.error("El horario debe estar entre las 9:00 y las 18:00.")
-                else:
-                    try:
-                        run_command("INSERT INTO disponibilidad (id_nutricionista,fecha_hora_inicio,duracion_minutos,estado,notas) VALUES (%s,%s,%s,'disponible',%s)",
-                                    (id_disp, fh, dur_sl, notas_sl or None))
-                        st.success(f"Slot agregado: {fh.strftime('%d/%m/%Y %H:%M')} ({dur_sl} min)")
-                        st.rerun()
-                    except Exception as e:
-                        st.error("Ya existe un slot en ese horario." if "unique" in str(e).lower() else str(e))
-        else:
-            col1, col2 = st.columns(2)
-            with col1:
-                f_multi = st.date_input("Fecha", value=hoy, key="f_multi")
-                h_ini   = st.time_input("Hora inicio", value=datetime.strptime("09:00","%H:%M").time(), key="h_ini")
-            with col2:
-                h_fin_  = st.time_input("Hora fin (máx. 18:00)", value=datetime.strptime("17:00","%H:%M").time(), key="h_fin")
-                if durs_disponibles:
-                    dur_opts_m = {f"{d['duracion_min']} min ({d['nombre']})": d["duracion_min"] for d in durs_disponibles}
-                    dur_sel_m  = st.selectbox("Duración según programa", list(dur_opts_m.keys()), key="dur_prog_m")
-                    dur_m      = dur_opts_m[dur_sel_m]
-                else:
-                    dur_m = st.number_input("Duración por slot (min)", min_value=15, max_value=180, value=60, step=15, key="dur_m")
-
-            slots_prev = []
-            if h_fin_ > h_ini:
-                actual = datetime.combine(f_multi, h_ini)
-                fin_dt = datetime.combine(f_multi, min(h_fin_, datetime.strptime("18:00","%H:%M").time()))
-                while actual + timedelta(minutes=dur_m) <= fin_dt:
-                    if actual.hour >= 9:
-                        slots_prev.append(actual)
-                    actual += timedelta(minutes=dur_m)
-
-            if slots_prev:
-                st.caption(f"Se generarán {len(slots_prev)} slots de {dur_m} min: " + " · ".join(s.strftime("%H:%M") for s in slots_prev))
-
-            if st.button(f"Cargar {len(slots_prev)} slots", use_container_width=True, key="btn_add_multi", disabled=len(slots_prev)==0):
-                ok = err = 0
-                for sdt in slots_prev:
-                    try:
-                        run_command("INSERT INTO disponibilidad (id_nutricionista,fecha_hora_inicio,duracion_minutos,estado) VALUES (%s,%s,%s,'disponible')",
-                                    (id_disp, sdt, dur_m))
-                        ok += 1
-                    except: err += 1
-                st.success(f"✅ {ok} slots de {dur_m} min cargados." + (f" {err} omitidos (ya existían)." if err else ""))
+        with c1:
+            if st.button("◀ Mes anterior", use_container_width=True):
+                st.session_state["agenda_mes_ref"] = avanzar_mes(
+                    st.session_state["agenda_mes_ref"],
+                    -1,
+                )
                 st.rerun()
 
-# ═══════════════════════════════
-# TAB 6 — PERMISOS (solo admin)
-# ═══════════════════════════════
-if rol == "administrador" and tab6 is not None:
-    with tab6:
-        st.subheader("Permisos y reasignaciones")
+        with c2:
+            st.markdown("")
+
+        with c3:
+            if st.button("Mes siguiente ▶", use_container_width=True):
+                st.session_state["agenda_mes_ref"] = avanzar_mes(
+                    st.session_state["agenda_mes_ref"],
+                    1,
+                )
+                st.rerun()
+
+        mes_ref = st.session_state["agenda_mes_ref"]
+        render_calendario_mes(id_disp, mes_ref)
+
         st.markdown("---")
+        st.markdown("**Ver detalle de un día**")
+
+        fecha_detalle = st.date_input(
+            "Seleccionar día",
+            value=hoy,
+            key="fecha_detalle_cal",
+        )
+
+        render_detalle_dia(id_disp, fecha_detalle)
+
+    with dtab2:
+        modo = st.radio(
+            "Acción",
+            ["Reservar turno", "Bloquear horario"],
+            horizontal=True,
+            key="modo_agenda_accion",
+        )
+
+        if modo == "Reservar turno":
+            st.markdown("**Reservar turno para paciente**")
+
+            pacientes = obtener_pacientes_para_reserva(id_disp)
+
+            if not pacientes:
+                st.info("No hay pacientes activos asignados a esta nutricionista.")
+            else:
+                opciones_p = {
+                    f"{p['paciente']} · {p['programa']}": p
+                    for p in pacientes
+                }
+
+                paciente_sel = st.selectbox(
+                    "Paciente",
+                    list(opciones_p.keys()),
+                    key="pac_reserva",
+                )
+
+                p_data = opciones_p[paciente_sel]
+                sesiones_pend = obtener_sesiones_pendientes_contrato(p_data["id_contrato"])
+
+                if not sesiones_pend:
+                    st.info("Este paciente no tiene sesiones programadas pendientes.")
+                else:
+                    opciones_s = {
+                        f"Sesión {s['numero_sesion']} · {fmt_fecha_hora(s['fecha_hora_programada'])}": s
+                        for s in sesiones_pend
+                    }
+
+                    sesion_sel = st.selectbox(
+                        "Sesión a reservar",
+                        list(opciones_s.keys()),
+                        key="sesion_reserva",
+                    )
+
+                    s_data = opciones_s[sesion_sel]
+
+                    c1, c2, c3, c4 = st.columns(4)
+
+                    with c1:
+                        f_res = st.date_input("Fecha", value=hoy, key="fecha_reserva")
+
+                    with c2:
+                        h_inicio_res = st.selectbox(
+                            "Hora inicio",
+                            generar_horas_inicio(),
+                            format_func=hora_label,
+                            key="hora_inicio_reserva",
+                        )
+
+                    with c3:
+                        horas_fin_reserva = [
+                            h for h in generar_horas_fin()
+                            if h > h_inicio_res
+                        ]
+
+                        h_fin_res = st.selectbox(
+                            "Hora fin",
+                            horas_fin_reserva,
+                            format_func=hora_label,
+                            key="hora_fin_reserva",
+                        )
+
+                    with c4:
+                        modalidad = st.selectbox(
+                            "Modalidad",
+                            ["virtual", "presencial", "mixta"],
+                            key="modalidad_reserva",
+                        )
+
+                    notas = st.text_input(
+                        "Notas",
+                        placeholder="Opcional",
+                        key="notas_reserva",
+                    )
+
+                    if st.button(
+                        "Guardar reserva",
+                        type="primary",
+                        use_container_width=True,
+                        key="guardar_reserva",
+                    ):
+                        fecha_hora = datetime.combine(f_res, h_inicio_res)
+
+                        duracion = int(
+                            (
+                                datetime.combine(f_res, h_fin_res)
+                                - datetime.combine(f_res, h_inicio_res)
+                            ).total_seconds() / 60
+                        )
+
+                        no_laborables_res = obtener_no_laborables(f_res.year)
+
+                        if es_no_laborable(f_res, no_laborables_res):
+                            st.error("No se puede reservar en un día no laborable.")
+                        elif not es_horario_laboral(fecha_hora):
+                            st.error("La reserva debe estar entre 9:00 y 18:00.")
+                        elif h_fin_res <= h_inicio_res:
+                            st.error("La hora fin debe ser posterior a la hora inicio.")
+                        else:
+                            slot_existente = obtener_slot_exacto(id_disp, fecha_hora)
+
+                            if slot_existente and slot_existente["estado"] in ("reservado", "bloqueado"):
+                                st.error("Ese horario ya está reservado o bloqueado.")
+                            else:
+                                reservar_sesion(
+                                    id_nutricionista=id_disp,
+                                    id_sesion=s_data["id_sesion"],
+                                    fecha_hora=fecha_hora,
+                                    modalidad=modalidad,
+                                    duracion_minutos=duracion,
+                                    notas=notas or f"Reserva - {p_data['paciente']}",
+                                )
+                                st.success("Turno reservado correctamente.")
+                                st.rerun()
+
+        else:
+            st.markdown("**Bloquear horario**")
+
+            fechas_posibles = []
+
+            for i in range(0, 60):
+                f = hoy + timedelta(days=i)
+                no_laborables_i = obtener_no_laborables(f.year)
+
+                if not es_no_laborable(f, no_laborables_i):
+                    fechas_posibles.append(f)
+
+            fechas_sel = st.multiselect(
+                "Seleccionar una o más fechas",
+                options=fechas_posibles,
+                format_func=lambda x: x.strftime("%d/%m/%Y"),
+                placeholder="Seleccionar fechas",
+                key="fechas_bloqueo_multi",
+            )
+
+            c1, c2 = st.columns(2)
+
+            with c1:
+                h_inicio = st.selectbox(
+                    "Hora inicio",
+                    generar_horas_inicio(),
+                    format_func=hora_label,
+                    key="h_inicio_bloq",
+                )
+
+            with c2:
+                horas_fin_validas = [
+                    h for h in generar_horas_fin()
+                    if h > h_inicio
+                ]
+
+                h_fin = st.selectbox(
+                    "Hora fin",
+                    horas_fin_validas,
+                    format_func=hora_label,
+                    key="h_fin_bloq",
+                )
+
+            notas = st.text_input(
+                "Notas",
+                placeholder="Ej: reunión, capacitación, bloqueo administrativo...",
+                key="notas_bloq",
+            )
+
+            if fechas_sel:
+                total_slots = 0
+
+                for f in fechas_sel:
+                    actual = datetime.combine(f, h_inicio)
+                    fin_dt = datetime.combine(f, h_fin)
+
+                    while actual < fin_dt:
+                        total_slots += 1
+                        actual += timedelta(minutes=PASO_MIN)
+
+                st.caption(f"Se crearán/actualizarán {total_slots} bloqueos.")
+
+            if st.button(
+                "Guardar bloqueo",
+                type="primary",
+                use_container_width=True,
+                key="guardar_bloqueo",
+            ):
+                if not fechas_sel:
+                    st.error("Seleccioná al menos una fecha.")
+                elif h_fin <= h_inicio:
+                    st.error("La hora fin debe ser posterior a la hora inicio.")
+                else:
+                    ok = 0
+
+                    for f in fechas_sel:
+                        actual = datetime.combine(f, h_inicio)
+                        fin_dt = datetime.combine(f, h_fin)
+
+                        while actual < fin_dt:
+                            slot_existente = obtener_slot_exacto(id_disp, actual)
+
+                            if slot_existente and slot_existente["estado"] == "reservado":
+                                actual += timedelta(minutes=PASO_MIN)
+                                continue
+
+                            upsert_disponibilidad(
+                                id_nutricionista=id_disp,
+                                fecha_hora=actual,
+                                duracion=PASO_MIN,
+                                estado="bloqueado",
+                                notas=notas or "Bloqueo manual",
+                                id_sesion=None,
+                            )
+                            ok += 1
+                            actual += timedelta(minutes=PASO_MIN)
+
+                    st.success(f"{ok} bloqueo(s) guardado(s).")
+                    st.rerun()
+
+        st.markdown("---")
+        st.markdown("**Modificar registros existentes**")
+
+        slots = obtener_slots(hoy, hoy + timedelta(days=60), id_disp)
+
+        if not slots:
+            st.info("No hay registros próximos para modificar.")
+        else:
+            opts = {
+                f"{fmt_fecha_hora(s['fecha_hora_inicio'])} · {s['estado']} · {s.get('paciente') or s.get('notas') or ''}": s
+                for s in slots
+            }
+
+            sel = st.selectbox("Registro", list(opts.keys()), key="slot_editar")
+            slot = opts[sel]
+
+            c1, c2 = st.columns(2)
+
+            with c1:
+                if st.button("Liberar horario", use_container_width=True, key="liberar_slot"):
+                    run_command(
+                        "DELETE FROM disponibilidad WHERE id_slot=%s",
+                        (slot["id_slot"],),
+                    )
+                    st.success("Horario liberado.")
+                    st.rerun()
+
+            with c2:
+                if st.button("Bloquear horario", use_container_width=True, key="bloquear_slot"):
+                    run_command(
+                        """
+                        UPDATE disponibilidad
+                        SET estado='bloqueado',
+                            id_sesion=NULL,
+                            notas=COALESCE(notas, 'Bloqueo manual')
+                        WHERE id_slot=%s
+                        """,
+                        (slot["id_slot"],),
+                    )
+                    st.success("Horario bloqueado.")
+                    st.rerun()
+
+
+if rol == "administrador":
+    with tab_permisos:
+        st.subheader("Permisos y reasignaciones")
+
         ptab1, ptab2 = st.tabs(["Solicitudes pendientes", "Reasignar paciente"])
+
         with ptab1:
-            solicitudes = run_query("""
-                SELECT pa.id_permiso, p.nombre||' '||p.apellido AS paciente, p.email,
-                       nb.nombre||' '||nb.apellido AS nutricionista_solicitante,
-                       na.nombre||' '||na.apellido AS nutricionista_actual,
-                       pr.nombre AS programa, pa.estado, pa.fecha_solicitud, pa.motivo
+            solicitudes = run_query(
+                """
+                SELECT pa.id_permiso,
+                       p.nombre || ' ' || p.apellido AS paciente,
+                       nb.nombre || ' ' || nb.apellido AS nutricionista_solicitante,
+                       na.nombre || ' ' || na.apellido AS nutricionista_actual,
+                       pr.nombre AS programa,
+                       pa.estado,
+                       pa.fecha_solicitud,
+                       pa.motivo
                 FROM permisos_acceso pa
-                JOIN pacientes p       ON pa.id_paciente=p.id_paciente
-                JOIN nutricionistas nb ON pa.id_nutricionista=nb.id_nutricionista
-                JOIN contratos c       ON p.id_paciente=c.id_paciente AND c.estado='activo'
-                JOIN programas pr      ON c.id_programa=pr.id_programa
-                JOIN nutricionistas na ON c.id_nutricionista=na.id_nutricionista
+                JOIN pacientes p ON pa.id_paciente = p.id_paciente
+                JOIN nutricionistas nb ON pa.id_nutricionista = nb.id_nutricionista
+                JOIN contratos c ON p.id_paciente = c.id_paciente AND c.estado = 'activo'
+                JOIN programas pr ON c.id_programa = pr.id_programa
+                JOIN nutricionistas na ON c.id_nutricionista = na.id_nutricionista
                 ORDER BY pa.estado, pa.fecha_solicitud DESC
-            """)
+                """
+            )
+
             if not solicitudes:
                 st.info("No hay solicitudes de acceso.")
             else:
                 for s in solicitudes:
-                    badge = {"pendiente":"🟡","aprobado":"🟢","rechazado":"🔴"}.get(s["estado"],"⚪")
+                    badge = {
+                        "pendiente": "🟡",
+                        "aprobado": "🟢",
+                        "rechazado": "🔴",
+                    }.get(s["estado"], "⚪")
+
                     with st.container(border=True):
-                        col1, col2, col3 = st.columns([3,2,2])
-                        with col1:
-                            st.markdown(f"{badge} **{s['nutricionista_solicitante']}** solicita acceso a **{s['paciente']}**")
+                        c1, c2, c3 = st.columns([3, 2, 2])
+
+                        with c1:
+                            st.markdown(
+                                f"{badge} **{s['nutricionista_solicitante']}** solicita acceso a **{s['paciente']}**"
+                            )
                             st.caption(f"Programa: {s['programa']} · Actual: {s['nutricionista_actual']}")
-                            if s["motivo"]: st.caption(f"Motivo: {s['motivo']}")
-                        with col2:
+                            if s.get("motivo"):
+                                st.caption(f"Motivo: {s['motivo']}")
+
+                        with c2:
                             st.markdown(f"Estado: **{s['estado']}**")
-                            st.caption(f"Solicitado: {str(s['fecha_solicitud'])[:10]}")
-                        with col3:
+                            st.caption(f"Solicitado: {fmt_fecha(s['fecha_solicitud'])}")
+
+                        with c3:
                             if s["estado"] == "pendiente":
-                                tipo = st.selectbox("Tipo", ["Temporal","Permanente"], key=f"tipo_{s['id_permiso']}")
+                                tipo = st.selectbox(
+                                    "Tipo",
+                                    ["Temporal", "Permanente"],
+                                    key=f"tipo_perm_{s['id_permiso']}",
+                                )
+
                                 if tipo == "Temporal":
-                                    ses_acc = st.selectbox("Sesiones", list(range(1,21)), index=3, key=f"ses_{s['id_permiso']}")
-                                    f_exp   = date.today() + timedelta(weeks=int(ses_acc)*2)
-                                    st.caption(f"~{f_exp.strftime('%d/%m/%Y')}")
+                                    ses_acc = st.selectbox(
+                                        "Sesiones",
+                                        list(range(1, 21)),
+                                        index=3,
+                                        key=f"ses_perm_{s['id_permiso']}",
+                                    )
+                                    f_exp = date.today() + timedelta(weeks=int(ses_acc) * 2)
                                 else:
                                     f_exp = None
+
                                 ca, cb = st.columns(2)
+
                                 with ca:
-                                    if st.button("Aprobar", key=f"apr_{s['id_permiso']}", use_container_width=True):
+                                    if st.button(
+                                        "Aprobar",
+                                        key=f"apr_perm_{s['id_permiso']}",
+                                        use_container_width=True,
+                                    ):
                                         if tipo == "Permanente":
-                                            run_command("UPDATE contratos SET id_nutricionista=pa.id_nutricionista FROM permisos_acceso pa WHERE contratos.id_paciente=pa.id_paciente AND pa.id_permiso=%s AND contratos.estado='activo'", (s["id_permiso"],))
-                                            run_command("UPDATE sesiones SET id_nutricionista_prog=pa.id_nutricionista FROM permisos_acceso pa JOIN contratos c ON c.id_paciente=pa.id_paciente WHERE sesiones.id_contrato=c.id_contrato AND pa.id_permiso=%s AND sesiones.estado='programada'", (s["id_permiso"],))
-                                            run_command("UPDATE permisos_acceso SET estado='aprobado', fecha_expiracion=NULL WHERE id_permiso=%s", (s["id_permiso"],))
+                                            run_command(
+                                                """
+                                                UPDATE contratos
+                                                SET id_nutricionista = pa.id_nutricionista
+                                                FROM permisos_acceso pa
+                                                WHERE contratos.id_paciente = pa.id_paciente
+                                                  AND pa.id_permiso = %s
+                                                  AND contratos.estado = 'activo'
+                                                """,
+                                                (s["id_permiso"],),
+                                            )
+                                            run_command(
+                                                """
+                                                UPDATE sesiones
+                                                SET id_nutricionista_prog = pa.id_nutricionista
+                                                FROM permisos_acceso pa
+                                                JOIN contratos c ON c.id_paciente = pa.id_paciente
+                                                WHERE sesiones.id_contrato = c.id_contrato
+                                                  AND pa.id_permiso = %s
+                                                  AND sesiones.estado = 'programada'
+                                                """,
+                                                (s["id_permiso"],),
+                                            )
+                                            run_command(
+                                                """
+                                                UPDATE permisos_acceso
+                                                SET estado='aprobado',
+                                                    fecha_expiracion=NULL,
+                                                    aprobado_por=%s,
+                                                    fecha_resolucion=NOW()
+                                                WHERE id_permiso=%s
+                                                """,
+                                                (id_usuario, s["id_permiso"]),
+                                            )
                                         else:
-                                            run_command("UPDATE permisos_acceso SET estado='aprobado', fecha_expiracion=%s WHERE id_permiso=%s", (f_exp, s["id_permiso"]))
-                                        st.success("Aprobado.")
+                                            run_command(
+                                                """
+                                                UPDATE permisos_acceso
+                                                SET estado='aprobado',
+                                                    fecha_expiracion=%s,
+                                                    aprobado_por=%s,
+                                                    fecha_resolucion=NOW()
+                                                WHERE id_permiso=%s
+                                                """,
+                                                (f_exp, id_usuario, s["id_permiso"]),
+                                            )
+
+                                        st.success("Solicitud aprobada.")
                                         st.rerun()
+
                                 with cb:
-                                    if st.button("❌", key=f"rec_{s['id_permiso']}", use_container_width=True):
-                                        run_command("UPDATE permisos_acceso SET estado='rechazado' WHERE id_permiso=%s", (s["id_permiso"],))
+                                    if st.button(
+                                        "Rechazar",
+                                        key=f"rec_perm_{s['id_permiso']}",
+                                        use_container_width=True,
+                                    ):
+                                        run_command(
+                                            """
+                                            UPDATE permisos_acceso
+                                            SET estado='rechazado',
+                                                aprobado_por=%s,
+                                                fecha_resolucion=NOW()
+                                            WHERE id_permiso=%s
+                                            """,
+                                            (id_usuario, s["id_permiso"]),
+                                        )
                                         st.rerun()
+
         with ptab2:
-            pacientes_activos = run_query("""SELECT p.id_paciente, p.nombre||' '||p.apellido AS nombre, n.nombre||' '||n.apellido AS nutricionista_actual, pr.nombre AS programa, c.id_contrato
-                FROM pacientes p JOIN contratos c ON p.id_paciente=c.id_paciente AND c.estado='activo'
-                JOIN nutricionistas n ON c.id_nutricionista=n.id_nutricionista
-                JOIN programas pr ON c.id_programa=pr.id_programa ORDER BY p.apellido""")
-            nutris_list = run_query("SELECT id_nutricionista, nombre||' '||apellido AS nombre FROM nutricionistas WHERE estado=TRUE ORDER BY apellido")
+            pacientes_activos = run_query(
+                """
+                SELECT p.id_paciente,
+                       p.nombre || ' ' || p.apellido AS nombre,
+                       n.nombre || ' ' || n.apellido AS nutricionista_actual,
+                       c.id_nutricionista AS id_nutricionista_actual,
+                       pr.nombre AS programa,
+                       c.id_contrato
+                FROM pacientes p
+                JOIN contratos c ON p.id_paciente = c.id_paciente AND c.estado = 'activo'
+                JOIN nutricionistas n ON c.id_nutricionista = n.id_nutricionista
+                JOIN programas pr ON c.id_programa = pr.id_programa
+                ORDER BY p.apellido
+                """
+            )
+
+            nutris_list = obtener_nutricionistas()
+
             if pacientes_activos and nutris_list:
-                pac_opts  = {f"{p['nombre']} ({p['nutricionista_actual']})": p for p in pacientes_activos}
-                nutr_opts = {n["nombre"]: n["id_nutricionista"] for n in nutris_list}
-                pac_sel   = st.selectbox("Paciente", list(pac_opts.keys()), key="reas_pac")
-                nutr_sel  = st.selectbox("Nueva nutricionista", list(nutr_opts.keys()), key="reas_nutr")
-                pac_data  = pac_opts[pac_sel]
-                tipo_reas = st.radio("Tipo", ["Permanente","Temporal"], horizontal=True, key="tipo_reas")
+                pac_opts = {
+                    f"{p['nombre']} ({p['nutricionista_actual']})": p
+                    for p in pacientes_activos
+                }
+                nutr_opts = {
+                    n["nombre"]: n["id_nutricionista"]
+                    for n in nutris_list
+                }
+
+                pac_sel = st.selectbox("Paciente", list(pac_opts.keys()), key="reas_pac")
+                nutr_sel = st.selectbox("Nueva nutricionista", list(nutr_opts.keys()), key="reas_nutr")
+
+                pac_data = pac_opts[pac_sel]
+                tipo_reas = st.radio(
+                    "Tipo",
+                    ["Permanente", "Temporal"],
+                    horizontal=True,
+                    key="tipo_reas",
+                )
+
                 f_exp_reas = None
+
                 if tipo_reas == "Temporal":
-                    ses_reas   = st.selectbox("Sesiones de acceso", list(range(1,21)), index=3, key="ses_reas")
-                    f_exp_reas = date.today() + timedelta(weeks=int(ses_reas)*2)
-                    st.caption(f"Expira ~{f_exp_reas.strftime('%d/%m/%Y')}")
-                if st.button("Reasignar", use_container_width=True, type="primary", key="btn_reas"):
+                    ses_reas = st.selectbox("Sesiones de acceso", list(range(1, 21)), index=3)
+                    f_exp_reas = date.today() + timedelta(weeks=int(ses_reas) * 2)
+
+                if st.button("Reasignar", use_container_width=True, type="primary"):
                     nueva_id = nutr_opts[nutr_sel]
+
                     if tipo_reas == "Permanente":
-                        run_command("UPDATE contratos SET id_nutricionista=%s WHERE id_contrato=%s", (nueva_id, pac_data["id_contrato"]))
-                        run_command("UPDATE sesiones SET id_nutricionista_prog=%s WHERE id_contrato=%s AND estado='programada'", (nueva_id, pac_data["id_contrato"]))
-                        st.success(f"Reasignado permanentemente.")
+                        run_command(
+                            """
+                            INSERT INTO historial_asignaciones_paciente
+                                (id_paciente, id_contrato, id_nutricionista_anterior,
+                                 id_nutricionista_nueva, tipo_cambio, motivo, creado_por)
+                            VALUES (%s, %s, %s, %s, 'reasignacion_directa', %s, %s)
+                            """,
+                            (
+                                pac_data["id_paciente"],
+                                pac_data["id_contrato"],
+                                pac_data["id_nutricionista_actual"],
+                                nueva_id,
+                                "Reasignación directa desde Agenda",
+                                id_usuario,
+                            ),
+                        )
+
+                        run_command(
+                            """
+                            UPDATE contratos
+                            SET id_nutricionista = %s
+                            WHERE id_contrato = %s
+                            """,
+                            (nueva_id, pac_data["id_contrato"]),
+                        )
+
+                        run_command(
+                            """
+                            UPDATE sesiones
+                            SET id_nutricionista_prog = %s
+                            WHERE id_contrato = %s
+                              AND estado = 'programada'
+                            """,
+                            (nueva_id, pac_data["id_contrato"]),
+                        )
+
+                        st.success("Paciente reasignado permanentemente.")
                     else:
-                        run_command("INSERT INTO permisos_acceso (id_nutricionista,id_paciente,estado,solicitado_por,fecha_solicitud,fecha_expiracion) VALUES (%s,%s,'aprobado',%s,CURRENT_DATE,%s) ON CONFLICT (id_nutricionista,id_paciente) DO UPDATE SET estado='aprobado', fecha_expiracion=%s",
-                                    (nueva_id, pac_data["id_paciente"], nueva_id, f_exp_reas, f_exp_reas))
-                        st.success(f"Acceso temporal otorgado.")
+                        run_command(
+                            """
+                            INSERT INTO permisos_acceso
+                                (id_nutricionista, id_paciente, estado, solicitado_por,
+                                 fecha_solicitud, fecha_expiracion)
+                            VALUES (%s, %s, 'aprobado', %s, NOW(), %s)
+                            ON CONFLICT (id_nutricionista, id_paciente)
+                            DO UPDATE SET
+                                estado='aprobado',
+                                fecha_expiracion=EXCLUDED.fecha_expiracion
+                            """,
+                            (
+                                nueva_id,
+                                pac_data["id_paciente"],
+                                nueva_id,
+                                f_exp_reas,
+                            ),
+                        )
+                        st.success("Acceso temporal otorgado.")
+
                     st.rerun()
 
-# ═══════════════════════════════
-# TAB CONFIRMAR TURNOS (solo nutricionista)
-# ═══════════════════════════════
+
 if rol == "nutricionista":
-    with tab_conf:
-        st.subheader("Turnos pendientes de confirmación")
-        st.caption("Revisá los turnos que eligieron tus pacientes y confirmalos o proponé otro horario.")
-        turnos_pend_list = run_query("""
-            SELECT s.id_sesion, s.fecha_hora_programada, s.modalidad, s.estado_confirmacion,
-                   p.nombre||' '||p.apellido AS paciente, p.email, pr.nombre AS programa,
-                   COALESCE(pr.duracion_sesion_minutos, 60) AS duracion_min
-            FROM sesiones s
-            JOIN contratos c  ON s.id_contrato=c.id_contrato
-            JOIN pacientes p  ON c.id_paciente=p.id_paciente
-            JOIN programas pr ON c.id_programa=pr.id_programa
-            WHERE s.id_nutricionista_prog=%s AND s.numero_sesion=1
-            AND s.estado_confirmacion IN ('pendiente','modificada')
-            ORDER BY s.fecha_hora_programada
-        """, (id_nutri,))
+    with tab_turnos:
+        st.subheader("Turnos pendientes")
 
-        # Solicitudes de reprogramación del paciente
-        sols_repr = run_query("""
-            SELECT sr.id_solicitud, sr.id_sesion, sr.id_paciente,
-                   p.nombre||' '||p.apellido AS paciente,
-                   s.fecha_hora_programada, s.numero_sesion,
-                   pr.nombre AS programa
-            FROM solicitudes_reprogramacion sr
-            JOIN pacientes p  ON sr.id_paciente=p.id_paciente
-            JOIN sesiones s   ON sr.id_sesion=s.id_sesion
-            JOIN contratos c  ON s.id_contrato=c.id_contrato
-            JOIN programas pr ON c.id_programa=pr.id_programa
-            WHERE s.id_nutricionista_prog=%s
-            AND sr.estado='pendiente'
-            AND sr.propuesta_por='paciente'
-            AND sr.opcion_1 IS NULL
-            ORDER BY sr.id_solicitud DESC
-        """, (id_nutri,))
+        turnos = obtener_sesiones(
+            hoy - timedelta(days=60),
+            hoy + timedelta(days=60),
+            estado="programada",
+            id_nutricionista=id_nutri,
+        )
 
-        if sols_repr:
-            st.markdown("**Solicitudes de reprogramación de pacientes:**")
-            for sr in sols_repr:
-                with st.container(border=True):
-                    col1, col2 = st.columns([2,3])
-                    with col1:
-                        st.markdown(f"**{sr['paciente']}**")
-                        st.caption(f"{sr['programa']} · Sesión #{sr['numero_sesion']}")
-                        st.caption(f"Turno actual: {str(sr['fecha_hora_programada'])[:16]}")
-                    with col2:
-                        st.markdown("Proponé hasta 3 opciones de horario:")
-                        op1 = st.date_input("Opción 1 fecha", key=f"op1d_{sr['id_solicitud']}", value=hoy)
-                        h1  = st.time_input("Opción 1 hora", key=f"op1h_{sr['id_solicitud']}")
-                        op2 = st.date_input("Opción 2 fecha (opcional)", key=f"op2d_{sr['id_solicitud']}", value=hoy)
-                        h2  = st.time_input("Opción 2 hora", key=f"op2h_{sr['id_solicitud']}")
-                        if st.button("Enviar opciones", key=f"env_{sr['id_solicitud']}", use_container_width=True):
-                            fh1 = datetime.combine(op1, h1)
-                            fh2 = datetime.combine(op2, h2) if op2 != op1 else None
-                            run_command("""
-                                UPDATE solicitudes_reprogramacion
-                                SET opcion_1=%s, opcion_2=%s, propuesta_por='nutricionista'
-                                WHERE id_solicitud=%s
-                            """, (fh1, fh2, sr["id_solicitud"]))
-                            st.success("Opciones enviadas al paciente.")
-                            st.rerun()
-            st.markdown("---")
-
-        if not turnos_pend_list:
-            st.success("No hay turnos pendientes de confirmación.")
+        if not turnos:
+            st.success("No hay turnos programados pendientes.")
         else:
-            for t in turnos_pend_list:
-                badge = "🟡 pendiente" if t["estado_confirmacion"] == "pendiente" else "🔵 modificado"
+            for t in turnos:
+                etiqueta_conf = (
+                    "Reprogramada"
+                    if t.get("estado_confirmacion") == "modificada"
+                    else (t.get("estado_confirmacion") or "pendiente")
+                )
+
                 with st.container(border=True):
-                    col1, col2, col3 = st.columns([3,2,2])
-                    with col1:
+                    c1, c2, c3 = st.columns([3, 2, 2])
+
+                    with c1:
                         st.markdown(f"**{t['paciente']}**")
-                        st.caption(f"{t['programa']} · {t['modalidad']} · {t['duracion_min']} min")
-                        st.caption(t['email'])
-                        st.markdown(f"Turno: **{str(t['fecha_hora_programada'])[:16]}**")
-                        st.caption(f"Estado: {badge}")
-                    with col2:
-                        if st.button("Confirmar", key=f"conf_{t['id_sesion']}", use_container_width=True, type="primary"):
-                            run_command("UPDATE sesiones SET estado_confirmacion='confirmada' WHERE id_sesion=%s", (t["id_sesion"],))
-                            st.success("Turno confirmado.")
+                        st.caption(f"{t['programa']} · {t['modalidad']}")
+                        st.markdown(f"Turno: **{fmt_fecha_hora(t['fecha_hora_programada'])}**")
+                        st.caption(f"Estado de turno: {etiqueta_conf}")
+
+                    with c2:
+                        if st.button(
+                            "Marcar atendida",
+                            key=f"aten_{t['id_sesion']}",
+                            use_container_width=True,
+                            type="primary",
+                        ):
+                            run_command(
+                                """
+                                UPDATE sesiones
+                                SET estado='atendida',
+                                    fecha_hora_atencion=NOW(),
+                                    id_nutricionista_aten=%s
+                                WHERE id_sesion=%s
+                                """,
+                                (id_nutri, t["id_sesion"]),
+                            )
                             st.rerun()
-                    with col3:
-                        with st.expander("Proponer otro horario"):
-                            nueva_f = st.date_input("Nueva fecha", value=hoy, key=f"nf_{t['id_sesion']}")
-                            nueva_h = st.time_input("Nueva hora (9-18hs)", key=f"nh_{t['id_sesion']}")
-                            if st.button("Proponer", key=f"prop_{t['id_sesion']}", use_container_width=True):
-                                if nueva_h.hour < 9 or nueva_h.hour >= 18:
-                                    st.error("El horario debe estar entre las 9:00 y las 18:00.")
+
+                        if st.button(
+                            "Marcar ausente",
+                            key=f"ausente_{t['id_sesion']}",
+                            use_container_width=True,
+                        ):
+                            run_command(
+                                "UPDATE sesiones SET estado='ausente' WHERE id_sesion=%s",
+                                (t["id_sesion"],),
+                            )
+                            st.rerun()
+
+                    with c3:
+                        with st.expander("Reprogramar"):
+                            nueva_f = st.date_input(
+                                "Nueva fecha",
+                                value=max(
+                                    hoy,
+                                    pd.to_datetime(t["fecha_hora_programada"]).date(),
+                                ),
+                                key=f"rep_f_{t['id_sesion']}",
+                            )
+
+                            nueva_h = st.selectbox(
+                                "Nueva hora",
+                                generar_horas_inicio(),
+                                format_func=hora_label,
+                                key=f"rep_h_{t['id_sesion']}",
+                            )
+
+                            nueva_modalidad = st.selectbox(
+                                "Modalidad",
+                                ["virtual", "presencial", "mixta"],
+                                index=["virtual", "presencial", "mixta"].index(t["modalidad"])
+                                if t["modalidad"] in ["virtual", "presencial", "mixta"]
+                                else 0,
+                                key=f"rep_mod_{t['id_sesion']}",
+                            )
+
+                            motivo = st.text_input(
+                                "Motivo",
+                                placeholder="Ej: pedido del paciente, cambio de agenda...",
+                                key=f"rep_mot_{t['id_sesion']}",
+                            )
+
+                            if st.button(
+                                "Guardar reprogramación",
+                                key=f"rep_guardar_{t['id_sesion']}",
+                                use_container_width=True,
+                            ):
+                                nueva_fh = datetime.combine(nueva_f, nueva_h)
+                                no_labs = obtener_no_laborables(nueva_f.year)
+
+                                if es_no_laborable(nueva_f, no_labs):
+                                    st.error("No se puede reprogramar a un día no laborable.")
+                                elif not es_horario_laboral(nueva_fh):
+                                    st.error("El horario debe estar entre 9:00 y 18:00.")
                                 else:
-                                    nueva_fh = datetime.combine(nueva_f, nueva_h)
-                                    run_command("UPDATE sesiones SET fecha_hora_programada=%s, estado_confirmacion='modificada' WHERE id_sesion=%s", (nueva_fh, t["id_sesion"]))
-                                    st.success(f"Nuevo horario propuesto: {nueva_fh.strftime('%d/%m/%Y %H:%M')}")
-                                    st.rerun()
+                                    slot_existente = obtener_slot_exacto(id_nutri, nueva_fh)
+
+                                    if slot_existente and slot_existente["estado"] in ("reservado", "bloqueado"):
+                                        st.error("Ese horario ya está reservado o bloqueado.")
+                                    else:
+                                        registrar_reprogramacion_desde_agenda(
+                                            id_sesion=t["id_sesion"],
+                                            nueva_fecha_hora=nueva_fh,
+                                            modalidad_nueva=nueva_modalidad,
+                                            motivo=motivo or "Reprogramación desde agenda",
+                                            reprogramada_por="nutricionista",
+                                        )
+                                        st.success("Turno reprogramado.")
+                                        st.rerun()
