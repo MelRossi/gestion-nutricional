@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import streamlit as st
 from database import run_query
 from utils import cargar_estilos, mostrar_sidebar, page_header, info_banner
@@ -277,7 +276,7 @@ if "usuario" in st.session_state:
                 WHERE id_paciente = %s
             """, (id_p,))
             if pac_check and int(pac_check[0]["onboarding_paso"] or 0) < 5:
-                st.switch_page("pages/onboarding.py")
+                st.switch_page("pages/onboarding_form.py")
 
     mostrar_sidebar()
     page_header("Gisella - Nutrición Profesional", f"Bienvenida, {nombre}")

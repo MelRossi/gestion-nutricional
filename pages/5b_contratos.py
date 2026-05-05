@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from database import run_query, run_command
-from utils import mostrar_sidebar
+from utils import mostrar_sidebar, page_header, info_banner, section_label
 
 
 if "usuario" not in st.session_state:
@@ -20,8 +20,7 @@ usuario = st.session_state["usuario"]
 registrado_por = usuario.get("email") or str(usuario.get("id_usuario") or "admin")
 
 mostrar_sidebar()
-st.title("Contratos")
-st.markdown("---")
+page_header("Contratos")
 
 
 def fmt_fecha(x):
@@ -128,9 +127,9 @@ def aplicar_pago(id_pago, monto, medio_pago, tipo_movimiento, confirmado=True):
 tab1, tab2, tab3 = st.tabs(["Ver contratos", "Nuevo contrato", "Reprogramaciones"])
 
 
-# ═══════════════════════════════
-# TAB 1 — VER CONTRATOS
-# ═══════════════════════════════
+
+# VER CONTRATOS
+
 with tab1:
     filtro_estado = st.selectbox(
         "Estado",
@@ -237,11 +236,11 @@ with tab1:
             ],
             use_container_width=True,
             hide_index=True,
-            height=430,
+            height=300,
         )
 
         st.markdown("---")
-        st.subheader("Registrar pago")
+        section_label("Registrar pago")
 
         contratos_opts = {
             f"#{c['id_contrato']} — {c['paciente']} ({c['programa']})": c
@@ -371,11 +370,11 @@ with tab1:
         st.info("No hay contratos.")
 
 
-# ═══════════════════════════════
-# TAB 2 — NUEVO CONTRATO
-# ═══════════════════════════════
+
+# NUEVO CONTRATO
+
 with tab2:
-    st.subheader("Crear nuevo contrato")
+    section_label("Crear nuevo contrato")
 
 
     pacientes_list = run_query(
@@ -674,11 +673,11 @@ with tab2:
                 st.error(f"Error: {e}")
 
 
-# ═══════════════════════════════
-# TAB 3 — REPROGRAMACIONES
-# ═══════════════════════════════
+
+# REPROGRAMACIONES
+
 with tab3:
-    st.subheader("Gestión de reprogramaciones")
+    section_label("Gestión de reprogramaciones")
     st.markdown("**Regla vigente:** máximo 2 reprogramaciones totales por programa · 1 por mes calendario.")
     st.markdown("---")
 

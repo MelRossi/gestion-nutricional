@@ -1,33 +1,31 @@
 import streamlit as st
-from utils import mostrar_sidebar
+from utils import mostrar_sidebar, page_header, info_banner, section_label
 import pandas as pd
 from database import run_query, run_command, hashear_password, email_existe
 
 if "usuario" not in st.session_state:
-    st.warning("Debés iniciar sesión para acceder a esta página.")
+    st.warning("Debes iniciar sesión para acceder a esta página.")
     st.stop()
 
 if st.session_state["usuario"]["rol"] != "administrador":
-    st.error("No tenés permisos para acceder a esta sección.")
+    st.error("No tienes permisos para acceder a esta sección.")
     st.stop()
 
 mostrar_sidebar()
-
-st.title("Administración")
-st.markdown("---")
+page_header("Administración")
 
 pendientes = run_query("""
     SELECT COUNT(*) AS n FROM usuarios
     WHERE rol = 'nutricionista' AND estado_aprobacion = 'pendiente'
 """)
 if pendientes[0]["n"] > 0:
-    st.warning(f"⚠️ Hay **{pendientes[0]['n']}** nutricionista(s) pendiente(s) de aprobación.")
+    info_banner(f"Hay {pendientes[0]['n']} nutricionista(s) pendiente(s) de aprobación.", "warning")
 
 tab1, tab2, tab3, tab4 = st.tabs(["Aprobaciones", "Usuarios", "Programas", "Resumen BD"])
 
-# ═══════════════════════════════════════
-# TAB 1 — APROBACIONES
-# ═══════════════════════════════════════
+
+# APROBACIONES
+
 with tab1:
     st.subheader("Solicitudes de registro — Nutricionistas")
 
@@ -83,9 +81,9 @@ with tab1:
         st.dataframe(df_t, use_container_width=True)
 
 
-# ═══════════════════════════════════════
-# TAB 2 — USUARIOS
-# ═══════════════════════════════════════
+
+# USUARIOS
+
 with tab2:
     st.subheader("Usuarios del sistema")
 
@@ -113,78 +111,130 @@ with tab2:
 
     st.markdown("---")
     with st.expander("Crear nuevo usuario"):
-        col1, col2 = st.columns(2)
+        st.caption("Primero seleccioná el rol. Los datos solicitados cambian según el tipo de usuario.")
+
+        nuevo_rol = st.selectbox(
+            "Rol *",
+            ["administrador", "paciente", "nutricionista"],
+            key="nuevo_rol",
+        )
+
+        st.markdown("**Datos de acceso**")
+        col1, col2, col3 = st.columns(3)
         with col1:
             nuevo_email = st.text_input("Email *", key="nuevo_email")
-            nuevo_rol   = st.selectbox("Rol *", ["nutricionista", "paciente", "administrador"], key="nuevo_rol")
         with col2:
-            nueva_pass  = st.text_input("Contrasena *", type="password", key="nueva_pass")
-            nueva_pass2 = st.text_input("Repetir contrasena *", type="password", key="nueva_pass2")
+            nueva_pass = st.text_input("Contraseña *", type="password", key="nueva_pass")
+        with col3:
+            nueva_pass2 = st.text_input("Repetir contraseña *", type="password", key="nueva_pass2")
 
         if nuevo_rol == "nutricionista":
             st.markdown("**Datos del nutricionista**")
-            col3, col4 = st.columns(2)
-            with col3:
-                n_nombre       = st.text_input("Nombre *", key="n_nombre")
+            col1, col2 = st.columns(2)
+            with col1:
+                n_nombre = st.text_input("Nombre *", key="n_nombre")
                 n_especialidad = st.text_input("Especialidad", key="n_especialidad")
-                n_cmp          = st.text_input("CMP", key="n_cmp")
-            with col4:
-                n_apellido      = st.text_input("Apellido *", key="n_apellido")
-                n_celular       = st.text_input("Celular", key="n_celular")
-                n_tipo_contrato = st.selectbox("Tipo contrato",
-                                    ["planilla", "recibo_honorarios", "outsourcing"], key="n_tipo")
+                n_cmp = st.text_input("CMP", key="n_cmp")
+            with col2:
+                n_apellido = st.text_input("Apellido *", key="n_apellido")
+                n_celular = st.text_input("Celular", key="n_celular")
+
         elif nuevo_rol == "paciente":
             st.markdown("**Datos del paciente**")
-            col3, col4 = st.columns(2)
-            with col3:
-                p_nombre   = st.text_input("Nombre *", key="p_nombre")
-                p_telefono = st.text_input("Telefono", key="p_telefono")
-                p_genero   = st.selectbox("Genero",
-                                ["femenino", "masculino", "otro", "prefiero_no_decir"], key="p_genero")
-            with col4:
+            col1, col2 = st.columns(2)
+            with col1:
+                p_nombre = st.text_input("Nombre *", key="p_nombre")
+                p_dni = st.text_input("DNI *", key="p_dni")
+                p_telefono = st.text_input("Teléfono", key="p_telefono")
+            with col2:
                 p_apellido = st.text_input("Apellido *", key="p_apellido")
-                p_fnac     = st.date_input("Fecha de nacimiento", key="p_fnac")
+                p_fnac = st.date_input("Fecha de nacimiento", key="p_fnac")
+                p_genero = st.selectbox(
+                    "Género",
+                    ["femenino", "masculino", "otro", "prefiero_no_decir"],
+                    key="p_genero",
+                )
 
-        if st.button("Crear usuario", key="btn_crear_usuario"):
+        if st.button("Crear usuario", type="primary", key="btn_crear_usuario"):
             errores = []
-            if not nuevo_email:           errores.append("Email requerido.")
-            if not nueva_pass:            errores.append("Contrasena requerida.")
-            if nueva_pass != nueva_pass2: errores.append("Las contrasenas no coinciden.")
-            if len(nueva_pass) < 6:       errores.append("Minimo 6 caracteres.")
+
+            if not nuevo_email:
+                errores.append("Email requerido.")
+            if not nueva_pass:
+                errores.append("Contraseña requerida.")
+            if nueva_pass != nueva_pass2:
+                errores.append("Las contraseñas no coinciden.")
+            if nueva_pass and len(nueva_pass) < 6:
+                errores.append("La contraseña debe tener mínimo 6 caracteres.")
             if nuevo_email and email_existe(nuevo_email):
-                errores.append(f"El email {nuevo_email} ya esta registrado.")
-            if nuevo_rol == "nutricionista" and (not n_nombre or not n_apellido):
-                errores.append("Nombre y apellido del nutricionista requeridos.")
-            elif nuevo_rol == "paciente" and (not p_nombre or not p_apellido):
-                errores.append("Nombre y apellido del paciente requeridos.")
+                errores.append(f"El email {nuevo_email} ya está registrado.")
+
+            if nuevo_rol == "nutricionista":
+                if not n_nombre or not n_apellido:
+                    errores.append("Nombre y apellido del nutricionista son requeridos.")
+
+            elif nuevo_rol == "paciente":
+                if not p_nombre or not p_apellido:
+                    errores.append("Nombre y apellido del paciente son requeridos.")
+                if not p_dni:
+                    errores.append("DNI requerido para pacientes.")
+                elif run_query("SELECT 1 FROM pacientes WHERE dni = %s", (p_dni.strip(),)):
+                    errores.append(f"Ya existe un paciente con DNI {p_dni.strip()}.")
 
             if errores:
-                for e in errores: st.error(e)
+                for e in errores:
+                    st.error(e)
             else:
                 try:
                     ph = hashear_password(nueva_pass)
+
                     run_command("""
                         INSERT INTO usuarios (email, password_hash, rol, estado, estado_aprobacion)
                         VALUES (%s, %s, %s, TRUE, 'aprobado')
-                    """, (nuevo_email, ph, nuevo_rol))
-                    id_u = run_query("SELECT id_usuario FROM usuarios WHERE email = %s",
-                                     (nuevo_email,))[0]["id_usuario"]
+                    """, (nuevo_email.strip(), ph, nuevo_rol))
+
+                    id_u = run_query(
+                        "SELECT id_usuario FROM usuarios WHERE email = %s",
+                        (nuevo_email.strip(),),
+                    )[0]["id_usuario"]
+
                     if nuevo_rol == "nutricionista":
                         run_command("""
                             INSERT INTO nutricionistas
-                                (id_usuario, nombre, apellido, especialidad, cmp, celular, tipo_contrato)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s)
-                        """, (id_u, n_nombre, n_apellido, n_especialidad, n_cmp, n_celular, n_tipo_contrato))
+                                (id_usuario, nombre, apellido, email, especialidad, cmp, celular, estado)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE)
+                        """, (
+                            id_u,
+                            n_nombre.strip(),
+                            n_apellido.strip(),
+                            nuevo_email.strip(),
+                            n_especialidad or None,
+                            n_cmp or None,
+                            n_celular or None,
+                        ))
+
                     elif nuevo_rol == "paciente":
                         run_command("""
                             INSERT INTO pacientes
-                                (id_usuario, nombre, apellido, telefono, genero, fecha_nacimiento)
-                            VALUES (%s, %s, %s, %s, %s, %s)
-                        """, (id_u, p_nombre, p_apellido, p_telefono, p_genero, p_fnac))
-                    st.success(f"Usuario {nuevo_email} creado.")
+                                (id_usuario, nombre, apellido, dni, email, telefono,
+                                 genero, fecha_nacimiento, estado, onboarding_paso)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'activo', 0)
+                        """, (
+                            id_u,
+                            p_nombre.strip(),
+                            p_apellido.strip(),
+                            p_dni.strip(),
+                            nuevo_email.strip(),
+                            p_telefono or None,
+                            p_genero,
+                            p_fnac,
+                        ))
+
+                    st.success(f"Usuario {nuevo_email} creado correctamente.")
                     st.rerun()
+
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    st.error(f"Error al crear usuario: {e}")
 
     with st.expander("Activar / Desactivar usuario"):
         if usuarios:
@@ -202,9 +252,9 @@ with tab2:
                     st.rerun()
 
 
-# ═══════════════════════════════════════
-# TAB 3 — PROGRAMAS
-# ═══════════════════════════════════════
+
+# PROGRAMAS
+
 with tab3:
     st.subheader("Programas nutricionales")
 
@@ -341,9 +391,9 @@ with tab3:
                     st.rerun()
 
 
-# ═══════════════════════════════════════
-# TAB 4 — RESUMEN BD
-# ═══════════════════════════════════════
+
+# RESUMEN BD
+
 with tab4:
     st.subheader("Estado de la base de datos")
     tablas = ["usuarios","nutricionistas","pacientes","programas","contratos",

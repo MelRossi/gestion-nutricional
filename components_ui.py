@@ -1,9 +1,8 @@
 import streamlit as st
 from utils import mostrar_sidebar
 
-# ══════════════════════════════════════════════════════
+
 # NOTIFICACIONES CON COLORES DE PALETA
-# ══════════════════════════════════════════════════════
 
 def mostrar_notificacion(tipo, mensaje, icono=None):
     """
@@ -46,9 +45,8 @@ def mostrar_notificacion(tipo, mensaje, icono=None):
     """, unsafe_allow_html=True)
 
 
-# ══════════════════════════════════════════════════════
+
 # BOTONES CON TAMAÑOS CONSISTENTES
-# ══════════════════════════════════════════════════════
 
 def boton_primario(label, key=None, on_click=None, disabled=False, ancho="auto", icono=None):
     """
@@ -140,9 +138,7 @@ def boton_secundario(label, key=None, on_click=None, posicion='derecha', icono=N
             )
 
 
-# ══════════════════════════════════════════════════════
 # JERARQUÍA VISUAL Y ESTRUCTURA
-# ══════════════════════════════════════════════════════
 
 def titulo_seccion(texto, nivel=3):
     """
@@ -191,9 +187,9 @@ def separador(altura='md'):
     st.markdown(f"<div style='height:{px}px'></div>", unsafe_allow_html=True)
 
 
-# ══════════════════════════════════════════════════════
+
 # BLOQUES Y CARDS
-# ══════════════════════════════════════════════════════
+
 
 def bloque_info(contenido_html, color_borde="#00DC8E", padding="16px"):
     st.markdown(f"""<div style="
@@ -244,9 +240,8 @@ Restantes: <strong style="color:#FFCC33;">{restantes}</strong>
 
     bloque_info(html, color_borde="#00DC8E", padding="20px")
 
-# ══════════════════════════════════════════════════════
+
 # BADGES Y PILLS DE ESTADO
-# ══════════════════════════════════════════════════════
 
 # Colores estandarizados para estados
 COLORES_ESTADO = {
@@ -320,9 +315,8 @@ def mostrar_badge(estado, custom_label=None):
     st.markdown(badge_estado(estado, custom_label), unsafe_allow_html=True)
 
 
-# ══════════════════════════════════════════════════════
+
 # ELEMENTOS SELECCIONABLES
-# ══════════════════════════════════════════════════════
 
 def pills_seleccionables(opciones, key="pills", seleccion_actual=None):
     """
@@ -447,9 +441,8 @@ def secciones_card(opciones, key="seccion", seleccion_actual=None):
     )
 
 
-# ══════════════════════════════════════════════════════
+
 # HELPERS DE ESPACIADO
-# ══════════════════════════════════════════════════════
 
 ESPACIADO = {
     'xs': 8,
@@ -469,9 +462,8 @@ def espacio(tamaño='md'):
     separador(tamaño)
 
 
-# ══════════════════════════════════════════════════════
+
 # DIVIDER CON ESTILO
-# ══════════════════════════════════════════════════════
 
 def divider(texto=None):
     """
@@ -503,9 +495,8 @@ def divider(texto=None):
         st.markdown("---")
 
 
-# ══════════════════════════════════════════════════════
+
 # LOADING INDICATOR
-# ══════════════════════════════════════════════════════
 
 def loading_message(mensaje="Cargando..."):
     """

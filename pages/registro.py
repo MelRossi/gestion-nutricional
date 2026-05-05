@@ -156,7 +156,7 @@ with tab_pac:
                     "id_paciente":      id_paciente,
                 }
                 st.session_state.pop("programa_preseleccionado", None)
-                st.switch_page("pages/onboarding.py")
+                st.switch_page("pages/onboarding_form.py")
 
             except Exception as e:
                 st.error(f"Error al crear cuenta: {e}")

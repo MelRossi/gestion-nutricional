@@ -1,11 +1,9 @@
-# -*- coding: utf-8 -*-
 import os
 import traceback
 import streamlit as st
 
-# ============================================================
+
 # CARGA DE ESTILOS
-# ============================================================
 
 def cargar_estilos():
     """
@@ -18,9 +16,8 @@ def cargar_estilos():
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 
-# ============================================================
+
 # SIDEBAR UNIFICADO
-# ============================================================
 
 def mostrar_sidebar():
     """Sidebar única para todas las páginas logueadas."""
@@ -28,6 +25,54 @@ def mostrar_sidebar():
         return
 
     cargar_estilos()
+   
+# GLOBAL KPIs 
+
+    st.markdown("""
+    <style>
+
+    [data-testid="stMetric"] {
+        text-align: center !important;
+        background-color: #ffffff !important;
+        border-radius: 12px !important;
+        padding: 16px 12px !important;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.05) !important;
+    }
+
+    [data-testid="stMetricLabel"] {
+        display: flex !important;
+        justify-content: center !important;
+        text-align: center !important;
+    }
+
+    [data-testid="stMetricLabel"] p {
+        text-align: center !important;
+        width: 100% !important;
+        font-weight: 600 !important;
+        color: #141414 !important;
+    }
+
+    [data-testid="stMetricValue"] {
+        display: flex !important;
+        justify-content: center !important;
+        text-align: center !important;
+    }
+
+    [data-testid="stMetricValue"] div {
+        text-align: center !important;
+        width: 100% !important;
+        font-weight: 700 !important;
+        color: #141414 !important;
+    }
+
+    [data-testid="stMetric"]:hover {
+        transform: translateY(-2px);
+        transition: 0.2s ease;
+        box-shadow: 0 4px 12px rgba(0,220,142,0.15) !important;
+    }
+
+    </style>
+    """, unsafe_allow_html=True)
 
     usuario = st.session_state["usuario"]
     rol = usuario["rol"]
@@ -65,6 +110,8 @@ def mostrar_sidebar():
             st.page_link("pages/2_mis_pacientes.py", label="Pacientes")
             st.page_link("pages/3_ficha_paciente.py", label="Ficha del paciente")
             st.page_link("pages/3b_cargar_plan.py", label="Cargar plan")
+            st.page_link("pages/carga_manual_onboarding.py", label="Carga manual formulario")
+            st.page_link("pages/4_pagos.py", label="Pagos")
 
         elif rol == "nutricionista":
             _nav_label("MI TRABAJO")
@@ -73,6 +120,7 @@ def mostrar_sidebar():
             st.page_link("pages/2_mis_pacientes.py", label="Pacientes")
             st.page_link("pages/3_ficha_paciente.py", label="Ficha del paciente")
             st.page_link("pages/3b_cargar_plan.py", label="Cargar plan")
+            st.page_link("pages/carga_manual_onboarding.py", label="Carga manual formulario")
 
         elif rol == "paciente":
             _nav_label("MI CUENTA")
@@ -96,9 +144,8 @@ def _nav_label(texto: str):
     )
 
 
-# ============================================================
+
 # HELPERS UI
-# ============================================================
 
 def page_header(titulo: str, subtitulo: str = ""):
     cargar_estilos()
