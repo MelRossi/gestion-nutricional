@@ -29,6 +29,7 @@ mostrar_sidebar()
 page_header("Pacientes")
 
 
+
 # HELPERS
 
 def normalizar(texto):
@@ -61,7 +62,8 @@ def tipo_paciente_visual(valor):
 
 
 def estado_contrato_visual(row):
-    estado = (row.get("estado_contrato") or "").lower()
+    estado_raw = row.get("estado_contrato")
+    estado = "" if pd.isna(estado_raw) else str(estado_raw).lower()
     fecha_fin_real = row.get("fecha_fin_real")
     fecha_fin_teorica = row.get("fecha_fin_teorica")
     realizadas = safe_int(row.get("sesiones_realizadas"))
@@ -357,6 +359,7 @@ def render_tabla_pacientes(registros, incluir_nutricionista=False, key_prefix="p
 
         st.markdown("---")
         render_desempeno_paciente(int(seleccion["id_paciente"]))
+
 
 
 # VISTA ADMIN

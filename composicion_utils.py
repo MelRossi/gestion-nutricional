@@ -656,11 +656,19 @@ def _p(text: Any, style: ParagraphStyle) -> Paragraph:
     return Paragraph(escape(str(text if text not in (None, "") else "—")), style)
 
 
-def _buscar_navegador_local() -> Optional[str]:
-    """Busca Chrome o Edge instalado localmente. Evita que pyppeteer intente descargar Chromium."""
+def _buscar_navegador_local():
+    """Busca Chrome/Chromium/Edge en Windows y Linux."""
     candidatos = [
         os.environ.get("CHROME_PATH"),
-        os.environ.get("EDGE_PATH"),
+        os.environ.get("CHROMIUM_PATH"),
+
+        # Streamlit Cloud / Linux
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+
+        # Windows local
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
         r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
