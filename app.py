@@ -11,9 +11,9 @@ st.set_page_config(
 cargar_estilos()
 
 
-# ─────────────────────────────────────────
+
 # DASHBOARDS
-# ─────────────────────────────────────────
+
 def _dashboard_admin():
     st.subheader("Resumen general")
 
@@ -259,9 +259,9 @@ def _dashboard_paciente(usuario):
             st.caption("Tu nutricionista aún no ha cargado un plan. Aparecerá aquí cuando esté disponible.")
 
 
-# ─────────────────────────────────────────
+
 # USUARIO LOGUEADO
-# ─────────────────────────────────────────
+
 if "usuario" in st.session_state:
     usuario = st.session_state["usuario"]
     rol = usuario["rol"]
@@ -291,9 +291,9 @@ if "usuario" in st.session_state:
     st.stop()
 
 
-# ─────────────────────────────────────────
+
 # LANDING PÚBLICA
-# ─────────────────────────────────────────
+
 col_logo, col_btns = st.columns([5, 1])
 
 with col_logo:

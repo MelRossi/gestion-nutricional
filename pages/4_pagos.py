@@ -1,3 +1,5 @@
+from datetime import date, datetime, timedelta
+
 import pandas as pd
 import streamlit as st
 
@@ -17,7 +19,7 @@ usuario = st.session_state["usuario"]
 registrado_por = usuario.get("email") or str(usuario.get("id_usuario") or "admin")
 
 mostrar_sidebar()
-page_header("Pagos")
+page_header("Pagos y Programas")
 
 
 def fmt_fecha(x):
@@ -131,19 +133,320 @@ def registrar_pago(id_contrato, monto, medio_pago, tipo_pago, precio_final):
     )
 
 
-tab1, tab2 = st.tabs(["Registrar pago", "Resumen de pagos"])
+
+def crear_contrato_programa(
+    id_paciente,
+    id_programa,
+    id_nutricionista,
+    fecha_inicio,
+):
+    """
+    Crea contrato, sesiones placeholder y una cuota pendiente.
+    El pago se registra luego desde la pestaña 'Registrar pago'.
+    """
+    prog_rows = run_query(
+        """
+        SELECT *
+        FROM programas
+        WHERE id_programa = %s
+        LIMIT 1
+        """,
+        (id_programa,),
+    )
+
+    if not prog_rows:
+        raise Exception("No se encontró el programa seleccionado.")
+
+    prog = prog_rows[0]
+    fecha_fin = fecha_inicio + timedelta(days=int(prog["duracion_dias"] or 0))
+    precio_final = safe_float(prog["precio_base"])
+
+    run_command(
+        """
+        INSERT INTO contratos
+            (id_paciente, id_programa, id_nutricionista,
+             fecha_inicio, fecha_fin, fecha_fin_teorica, fecha_fin_real,
+             precio_base_contrato, descuento_contrato, precio_final,
+             estado, metodo_pago, reprogramaciones_usadas)
+        VALUES (%s, %s, %s, %s, %s, %s, NULL,
+                %s, 0, %s, 'pendiente_pago', NULL, 0)
+        """,
+        (
+            id_paciente,
+            id_programa,
+            id_nutricionista,
+            fecha_inicio,
+            fecha_fin,
+            fecha_fin,
+            prog["precio_base"],
+            precio_final,
+        ),
+    )
+
+    contrato_rows = run_query(
+        """
+        SELECT id_contrato
+        FROM contratos
+        WHERE id_paciente = %s
+        ORDER BY fecha_creacion DESC
+        LIMIT 1
+        """,
+        (id_paciente,),
+    )
+
+    if not contrato_rows:
+        raise Exception("No se pudo recuperar el contrato creado.")
+
+    id_contrato = contrato_rows[0]["id_contrato"]
+
+    placeholder = datetime(2099, 1, 1, 9, 0)
+
+    for i in range(int(prog["cantidad_sesiones"] or 0)):
+        run_command(
+            """
+            INSERT INTO sesiones
+                (id_contrato, id_nutricionista_prog, numero_sesion,
+                 fecha_hora_original, fecha_hora_programada,
+                 modalidad, estado, estado_confirmacion, contador_reprogramaciones)
+            VALUES (%s, %s, %s, %s, %s, %s, 'programada', 'pendiente', 0)
+            """,
+            (
+                id_contrato,
+                id_nutricionista,
+                i + 1,
+                placeholder,
+                placeholder,
+                prog["modalidad"],
+            ),
+        )
+
+    run_command(
+        """
+        INSERT INTO pagos
+            (id_contrato, numero_cuota, monto_programado,
+             monto_pagado, fecha_vencimiento, estado)
+        VALUES (%s, 1, %s, 0, %s, 'pendiente')
+        """,
+        (id_contrato, precio_final, fecha_inicio),
+    )
+
+    return id_contrato
+
+
+tab0, tab1, tab2 = st.tabs(["Asignar programa", "Registrar pago", "Resumen de pagos"])
+
+
+with tab0:
+    st.subheader("Asignar programa a paciente")
+    st.caption(
+        "Usá esta sección cuando el paciente ya completó el onboarding. "
+        "Acá se asigna el programa y se generan contrato, cuota pendiente y sesiones. "
+        "El pago se carga luego desde la pestaña Registrar pago."
+    )
+
+    pacientes_sin_contrato = run_query(
+        """
+        SELECT p.id_paciente,
+               p.nombre || ' ' || p.apellido AS paciente,
+               p.email,
+               p.tipo_paciente,
+               p.onboarding_paso,
+               p.fecha_registro,
+               p.dni,
+               p.telefono
+        FROM pacientes p
+        WHERE p.estado IN ('activo', 'pendiente_pago')
+          AND COALESCE(p.onboarding_paso, 0) >= 5
+          AND p.nombre IS NOT NULL
+          AND p.apellido IS NOT NULL
+          AND LOWER(TRIM(p.nombre)) <> 'pendiente'
+          AND LOWER(TRIM(p.apellido)) <> 'completar'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM contratos c
+              WHERE c.id_paciente = p.id_paciente
+                AND c.estado IN ('activo', 'pendiente_pago')
+          )
+        ORDER BY p.fecha_registro DESC, p.apellido, p.nombre
+        """
+    )
+
+    programas = run_query(
+        """
+        SELECT *
+        FROM programas
+        WHERE activo = TRUE
+        ORDER BY precio_base, nombre
+        """
+    )
+
+    nutricionistas = run_query(
+        """
+        SELECT id_nutricionista,
+               nombre || ' ' || apellido AS nombre
+        FROM nutricionistas
+        WHERE estado = TRUE
+        ORDER BY apellido, nombre
+        """
+    )
+
+    cantidad_pendientes = len(pacientes_sin_contrato or [])
+
+    if cantidad_pendientes > 0:
+        st.info(f"Hay {cantidad_pendientes} paciente(s) con onboarding completo pendiente(s) de asignar programa.")
+
+    if not pacientes_sin_contrato:
+        st.info("No hay pacientes con onboarding completo pendientes de asignación de programa.")
+        st.caption("Si esperabas ver un paciente, revisá que haya completado el formulario de onboarding.")
+    elif not programas:
+        st.warning("No hay programas activos configurados.")
+    elif not nutricionistas:
+        st.warning("No hay nutricionistas activas configuradas.")
+    else:
+        with st.expander("Ver pacientes pendientes de asignar", expanded=True):
+            df_pend = pd.DataFrame(pacientes_sin_contrato)
+            df_pend["Fecha registro"] = df_pend["fecha_registro"].apply(fmt_fecha)
+            df_pend = df_pend.rename(columns={
+                "paciente": "Paciente",
+                "email": "Email",
+                "tipo_paciente": "Tipo",
+                "dni": "DNI",
+                "telefono": "Teléfono",
+            })
+            st.dataframe(
+                df_pend[["Paciente", "Email", "Tipo", "DNI", "Teléfono", "Fecha registro"]],
+                use_container_width=True,
+                hide_index=True,
+                height=min(300, 70 + 35 * len(df_pend)),
+            )
+
+        buscar_activar = st.text_input(
+            "Buscar paciente",
+            placeholder="Nombre, apellido o email...",
+            key="activar_buscar_paciente",
+        )
+
+        pacientes_filtrados = pacientes_sin_contrato
+
+        if buscar_activar:
+            q = buscar_activar.lower().strip()
+            pacientes_filtrados = [
+                p for p in pacientes_sin_contrato
+                if q in (p.get("paciente") or "").lower()
+                or q in (p.get("email") or "").lower()
+            ]
+
+        if not pacientes_filtrados:
+            st.info("No se encontraron pacientes con onboarding completo para ese criterio.")
+        else:
+            pac_opts = {
+                f"{p['paciente']} · {p.get('email') or 'sin email'} · {p.get('tipo_paciente') or 'persona'}": p
+                for p in pacientes_filtrados
+            }
+
+            prog_opts = {
+                f"{p['nombre']} · {fmt_money(p['precio_base'])} · {p['cantidad_sesiones']} sesiones": p
+                for p in programas
+            }
+
+            nutri_opts = {
+                n["nombre"]: n["id_nutricionista"]
+                for n in nutricionistas
+            }
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                pac_sel = st.selectbox("Paciente *", list(pac_opts.keys()), key="activar_paciente")
+                prog_sel = st.selectbox("Programa *", list(prog_opts.keys()), key="activar_programa")
+
+            with col2:
+                nutri_sel = st.selectbox("Nutricionista asignada *", list(nutri_opts.keys()), key="activar_nutri")
+                fecha_inicio = st.date_input(
+                    "Fecha de inicio *",
+                    value=date.today(),
+                    format="DD/MM/YYYY",
+                    key="activar_fecha_inicio",
+                )
+
+            paciente = pac_opts[pac_sel]
+            programa = prog_opts[prog_sel]
+
+            st.markdown("---")
+
+            with st.container(border=True):
+                st.markdown("### Resumen de asignación")
+                c1, c2, c3 = st.columns(3)
+
+                with c1:
+                    st.markdown("**Paciente**")
+                    st.write(paciente["paciente"])
+                    st.caption(paciente.get("email") or "sin email")
+
+                with c2:
+                    st.markdown("**Programa**")
+                    st.write(programa["nombre"])
+                    st.caption(f"{programa['cantidad_sesiones']} sesiones · {programa['modalidad']}")
+
+                with c3:
+                    st.markdown("**Nutricionista**")
+                    st.write(nutri_sel)
+                    st.caption(f"Inicio: {fmt_fecha(fecha_inicio)}")
+
+                st.markdown("---")
+                st.markdown(f"**Precio base del programa:** {fmt_money(programa['precio_base'])}")
+                st.caption("El descuento, método de pago y monto abonado se cargan en la pestaña Registrar pago.")
+
+            if st.button(
+                "Asignar programa",
+                type="primary",
+                use_container_width=True,
+                key="activar_confirmar",
+            ):
+                try:
+                    id_contrato = crear_contrato_programa(
+                        id_paciente=paciente["id_paciente"],
+                        id_programa=programa["id_programa"],
+                        id_nutricionista=nutri_opts[nutri_sel],
+                        fecha_inicio=fecha_inicio,
+                    )
+
+                    st.success(
+                        f"Programa asignado correctamente. Contrato #{id_contrato} creado "
+                        "con cuota pendiente y sesiones generadas."
+                    )
+                    st.rerun()
+
+                except Exception as e:
+                    st.error(f"Error al asignar programa: {e}")
 
 
 with tab1:
     st.subheader("Registrar pago de paciente")
+    st.caption("Si el paciente aparece como 'sin programa asignado', primero debe pasar por la pestaña Asignar programa.")
 
     pacientes = run_query(
         """
         SELECT DISTINCT
                p.id_paciente,
-               p.nombre || ' ' || p.apellido AS paciente
+               p.nombre || ' ' || p.apellido AS paciente,
+               p.email,
+               CASE
+                   WHEN EXISTS (
+                       SELECT 1
+                       FROM contratos c
+                       WHERE c.id_paciente = p.id_paciente
+                         AND c.estado IN ('activo', 'pendiente_pago')
+                   )
+                   THEN TRUE ELSE FALSE
+               END AS tiene_contrato
         FROM pacientes p
-        JOIN contratos c ON p.id_paciente = c.id_paciente
+        WHERE p.estado IN ('activo', 'pendiente_pago')
+          AND COALESCE(p.onboarding_paso, 0) >= 5
+          AND p.nombre IS NOT NULL
+          AND p.apellido IS NOT NULL
+          AND LOWER(TRIM(p.nombre)) <> 'pendiente'
+          AND LOWER(TRIM(p.apellido)) <> 'completar'
         ORDER BY paciente
         """
     )
@@ -157,15 +460,20 @@ with tab1:
     pacientes_filtrados = pacientes
 
     if buscar:
+        q = buscar.lower().strip()
         pacientes_filtrados = [
             p for p in pacientes
-            if buscar.lower() in p["paciente"].lower()
+            if q in (p.get("paciente") or "").lower()
+            or q in (p.get("email") or "").lower()
         ]
 
     if not pacientes_filtrados:
         st.info("No se encontraron pacientes.")
     else:
-        opciones_pac = {p["paciente"]: p for p in pacientes_filtrados}
+        opciones_pac = {
+            f"{p['paciente']} · {p.get('email') or 'sin email'}" + ("" if p.get("tiene_contrato") else " · sin programa asignado"): p
+            for p in pacientes_filtrados
+        }
 
         paciente_sel = st.selectbox(
             "Coincidencias",
@@ -174,6 +482,13 @@ with tab1:
         )
 
         paciente = opciones_pac[paciente_sel]
+
+        if not paciente.get("tiene_contrato"):
+            st.warning(
+                "Este paciente ya completó el onboarding, pero todavía no tiene programa asignado. "
+                "Primero asignale un programa desde la pestaña 'Asignar programa'."
+            )
+            st.stop()
 
         contratos = run_query(
             """

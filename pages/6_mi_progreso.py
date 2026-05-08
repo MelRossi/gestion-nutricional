@@ -49,7 +49,7 @@ total      = int(c["cantidad_sesiones"])
 restantes  = total - realizadas
 pct        = realizadas / total if total > 0 else 0
 
-# ── RESUMEN DEL PROGRAMA ──
+# RESUMEN DEL PROGRAMA 
 with st.container(border=True):
     col1, col2 = st.columns([3, 2])
     with col1:
@@ -63,7 +63,7 @@ with st.container(border=True):
 
 st.markdown("---")
 
-# ── PRÓXIMA SESIÓN ──
+# PRÓXIMA SESIÓN 
 proxima = run_query("""
     SELECT s.numero_sesion, s.fecha_hora_programada, s.modalidad, s.estado_confirmacion
     FROM sesiones s
@@ -80,7 +80,7 @@ if proxima:
     st.markdown(f"**Próxima sesión:** #{ps['numero_sesion']} · {str(ps['fecha_hora_programada'])[:16]} · {ps['modalidad']} · {badge}")
     st.markdown("---")
 
-# ── HISTORIA NUTRICIONAL ──
+# HISTORIA NUTRICIONAL 
 historia = run_query("""
     SELECT version, peso, talla, imc, circ_cintura, circ_cadera, circ_brazo,
            avance_objetivos, fecha_registro

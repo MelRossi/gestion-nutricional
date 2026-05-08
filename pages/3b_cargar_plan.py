@@ -1,11 +1,20 @@
-# -*- coding: utf-8 -*-
 import json
 from copy import deepcopy
 from datetime import date, timedelta
+import pandas as pd
+
 
 import streamlit as st
 from database import run_query, run_command
 from utils import mostrar_sidebar, page_header, section_label, info_banner, divider
+from composicion_utils import (
+    build_composicion_payload,
+    build_composicion_pdf,
+    calcular_edad,
+    calcular_imc,
+    logo_to_data_uri,
+    show_composicion_preview,
+)
 from plan_utils import (
     read_plan_record,
     read_template_record,
@@ -17,9 +26,30 @@ from plan_utils import (
     send_plan_email,
 )
 
-# ─────────────────────────────────────────
+import re
+import unicodedata
+
+
+def limpiar_nombre_archivo(texto):
+    texto = str(texto or "").strip()
+    texto = unicodedata.normalize("NFD", texto)
+    texto = "".join(c for c in texto if unicodedata.category(c) != "Mn")
+    texto = texto.replace(" ", "_")
+    texto = re.sub(r"[^A-Za-z0-9_\-]", "", texto)
+    texto = re.sub(r"_+", "_", texto).strip("_")
+    return texto or "sin_nombre"
+
+
+def nombre_pdf_plan(titulo, version, paciente_data):
+    nombre_plan = limpiar_nombre_archivo(titulo or "plan")
+    apellido = limpiar_nombre_archivo(paciente_data.get("apellido") or "Paciente")
+    nombre = limpiar_nombre_archivo(paciente_data.get("nombre") or "")
+    fecha = date.today().strftime("%d-%m-%Y")
+    return f"plan_{nombre_plan}_V{version}_{apellido}_{nombre}_{fecha}.pdf"
+
+
 # CONTROL DE ACCESO
-# ─────────────────────────────────────────
+
 if "usuario" not in st.session_state:
     st.warning("Debes iniciar sesión.")
     st.stop()
@@ -35,9 +65,9 @@ id_nutri = usuario.get("id_nutricionista")
 mostrar_sidebar()
 page_header("Planes nutricionales")
 
-# ─────────────────────────────────────────
+
 # PACIENTE
-# ─────────────────────────────────────────
+
 
 id_paciente = st.session_state.get("id_paciente_ficha")
 lista = []
@@ -95,8 +125,11 @@ else:
     id_paciente = opciones_paciente[paciente_sel]
 
 paciente_rs = run_query("""
-    SELECT p.id_paciente, p.nombre, p.apellido, p.email, p.telefono
+    SELECT p.id_paciente, p.nombre, p.apellido, p.email, p.telefono,
+           p.dni, p.genero, p.fecha_nacimiento, p.tipo_paciente, p.id_empresa,
+           e.nombre AS empresa
     FROM pacientes p
+    LEFT JOIN empresas e ON e.id_empresa = p.id_empresa
     WHERE p.id_paciente = %s
 """, (id_paciente,))
 
@@ -108,7 +141,7 @@ paciente = paciente_rs[0]
 nombre_paciente = f"{paciente['nombre']} {paciente['apellido']}".strip()
 
 contrato = run_query("""
-    SELECT c.id_contrato, pr.nombre AS programa
+    SELECT c.id_contrato, c.id_nutricionista, pr.nombre AS programa
     FROM contratos c
     JOIN programas pr ON c.id_programa = pr.id_programa
     WHERE c.id_paciente = %s
@@ -125,9 +158,9 @@ ultima_anam = run_query("""
 """, (id_paciente,))
 anam = ultima_anam[0] if ultima_anam else {}
 
-# ─────────────────────────────────────────
+
 # HISTORIAL + BUSCADOR
-# ─────────────────────────────────────────
+
 busqueda = st.text_input(
     "Buscar en planes anteriores",
     placeholder="Ej: hipocalórico, proteínas, DASH, ansiedad...",
@@ -202,20 +235,39 @@ with st.container(border=True):
 
         plan_sel = opciones_hist[seleccionado_hist]
         parsed = read_plan_record(plan_sel)
+        contenido_json_hist = plan_sel.get("contenido_json")
+        if isinstance(contenido_json_hist, str):
+            try:
+                contenido_json_hist = json.loads(contenido_json_hist)
+            except Exception:
+                contenido_json_hist = None
+
+        es_composicion = isinstance(contenido_json_hist, dict) and contenido_json_hist.get("tipo") == "composicion_corporal"
 
         vigencia_txt = str(plan_sel["fecha_vigencia"])[:10] if plan_sel["fecha_vigencia"] else "—"
+        tipo_doc = "Infografía corporal" if es_composicion else "Plan nutricional"
         st.caption(
-            f"Nutricionista: {plan_sel['nutricionista']} · Estado: {plan_sel['estado']} · Vigencia: {vigencia_txt}"
+            f"Tipo: {tipo_doc} · Nutricionista: {plan_sel['nutricionista']} · Estado: {plan_sel['estado']} · Vigencia: {vigencia_txt}"
         )
 
-        col_btn1, col_btn2 = st.columns([1, 1])
+        col_espacio, col_btn1, col_btn2 = st.columns([3, 1, 1])
         with col_btn1:
-            if parsed["kind"] == "structured":
+            if es_composicion:
+                pdf_hist = build_composicion_pdf(contenido_json_hist)
+                st.download_button(
+                    "Descargar infografía PDF",
+                    data=pdf_hist,
+                    file_name=f"infografia_composicion_v{plan_sel['version']}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                    key=f"descargar_infografia_historial_{plan_sel['id_plan']}"
+                )
+            elif parsed["kind"] == "structured":
                 pdf_hist = build_plan_pdf(parsed["data"])
                 st.download_button(
                     "Descargar PDF",
                     data=pdf_hist,
-                    file_name=f"plan_{plan_sel['version']}.pdf",
+                    file_name=nombre_pdf_plan(plan_sel.get("titulo"), plan_sel.get("version"), paciente),
                     mime="application/pdf",
                     use_container_width=True,
                     key=f"descargar_historial_{plan_sel['id_plan']}"
@@ -225,24 +277,26 @@ with st.container(border=True):
                 st.link_button("Abrir archivo", plan_sel["archivo_url"], use_container_width=True)
 
         st.markdown("---")
-        if parsed["kind"] == "structured":
+        if es_composicion:
+            show_composicion_preview(contenido_json_hist, height=920)
+        elif parsed["kind"] == "structured":
             show_plan_preview(parsed["data"], height=920)
         else:
-            st.info("Este plan pertenece al formato anterior.")
+            st.info("Este documento pertenece al formato anterior.")
             st.markdown(parsed["legacy_text"] or "—")
     else:
         st.info("No se encontraron planes para ese criterio.")
 
 divider()
 
-# ─────────────────────────────────────────
-# PESTAÑAS
-# ─────────────────────────────────────────
-tab_modelo, tab_plan, tab_archivo = st.tabs(["Crear modelo", "Crear plan", "Subir archivo"])
 
-# ============================================================
+# PESTAÑAS
+
+tab_modelo, tab_plan, tab_composicion, tab_archivo = st.tabs(["Crear modelo", "Crear plan", "Composición corporal", "Subir archivo"])
+
+
 # CREAR MODELO
-# ============================================================
+
 with tab_modelo:
     section_label("Crear modelo reutilizable")
 
@@ -372,9 +426,9 @@ with tab_modelo:
         except Exception as e:
             st.error(f"Error guardando modelo: {e}")
 
-# ============================================================
+
 # CREAR PLAN
-# ============================================================
+
 with tab_plan:
     section_label("Crear plan para paciente")
 
@@ -439,6 +493,30 @@ with tab_plan:
                 st.session_state[editor_key] = deepcopy(initial_plan)
 
             plan_data = st.session_state[editor_key]
+
+            with st.expander("Logos del plan (opcional)", expanded=False):
+                col_logo_plan1, col_logo_plan2 = st.columns(2)
+                with col_logo_plan1:
+                    logo_plan_dueno = st.file_uploader(
+                        "Logo del dueño / marca principal",
+                        type=["png", "jpg", "jpeg"],
+                        key=f"{editor_key}_logo_dueno",
+                    )
+                with col_logo_plan2:
+                    logo_plan_empresa = st.file_uploader(
+                        "Logo empresa (si corresponde)",
+                        type=["png", "jpg", "jpeg"],
+                        key=f"{editor_key}_logo_empresa",
+                    )
+
+                if logo_plan_dueno or logo_plan_empresa:
+                    plan_data.setdefault("logos", {})
+                    if logo_plan_dueno:
+                        plan_data["logos"]["dueno"] = logo_to_data_uri(logo_plan_dueno)
+                    if logo_plan_empresa:
+                        plan_data["logos"]["empresa"] = logo_to_data_uri(logo_plan_empresa)
+                    st.session_state[editor_key] = plan_data
+                    st.success("Logos aplicados a la vista previa y al PDF de este plan.")
 
             # ─── VISTA PREVIA (siempre visible) ───
             st.markdown("### Vista previa del modelo")
@@ -611,7 +689,7 @@ with tab_plan:
                         contenido_json = json.dumps(plan_data, ensure_ascii=False)
                         contenido_texto = plain_text_summary_from_plan(plan_data)
                         pdf_bytes = build_plan_pdf(plan_data)
-                        pdf_filename = f"plan_{paciente['nombre']}_{paciente['apellido']}_v{nueva_version}.pdf".replace(" ", "_")
+                        pdf_filename = nombre_pdf_plan(titulo_interno, nueva_version, paciente)
 
                         if estado_plan == "activo":
                             run_command("""
@@ -720,7 +798,7 @@ with tab_plan:
                         contenido_json = json.dumps(plan_data, ensure_ascii=False)
                         contenido_texto = plain_text_summary_from_plan(plan_data)
                         pdf_bytes = build_plan_pdf(plan_data)
-                        pdf_filename = f"plan_{paciente['nombre']}_{paciente['apellido']}_v{nueva_version}.pdf".replace(" ", "_")
+                        pdf_filename = nombre_pdf_plan(titulo_interno, nueva_version, paciente)
 
                         if estado_plan == "activo":
                             run_command("""
@@ -779,9 +857,9 @@ with tab_plan:
             st.session_state[editor_key] = plan_data
 
 
-# ============================================================
+
 # SUBIR ARCHIVO
-# ============================================================
+
 with tab_archivo:
     section_label("Subir archivo complementario")
     st.caption("Úsalo para cargar una infografía, PDF u otro archivo de apoyo para el paciente.")
@@ -796,3 +874,269 @@ with tab_archivo:
     if archivo:
         st.info(f"Archivo cargado: {archivo.name}")
         st.warning("En esta etapa el archivo se carga manualmente, pero todavía no queda guardado en la base ni en Drive.")
+
+
+# COMPOSICIÓN CORPORAL / INFOGRAFÍA
+
+with tab_composicion:
+    section_label("Composición corporal")
+    st.caption(
+        "Generá la infografía dinámica desde la historia nutricional del paciente. "
+        "Se precarga la última medición y podés editarla; al guardar se crea una nueva versión en historia_nutricional."
+    )
+
+    def _fmt_fecha(x):
+        if not x:
+            return "—"
+        try:
+            return pd.to_datetime(x).strftime("%d/%m/%Y")
+        except Exception:
+            return str(x)[:10]
+
+    def _safe_num(x, default=0.0):
+        try:
+            return float(x or default)
+        except Exception:
+            return default
+
+    def _siguiente_version_historia(id_paciente_actual):
+        rows = run_query("""
+            SELECT COALESCE(MAX(version), 0) + 1 AS version
+            FROM historia_nutricional
+            WHERE id_paciente = %s
+        """, (id_paciente_actual,))
+        return int(rows[0]["version"] or 1) if rows else 1
+
+    def _obtener_historia(id_paciente_actual):
+        return run_query("""
+            SELECT id_historia, id_paciente, id_sesion, fecha_registro, version,
+                   peso, talla, imc,
+                   circ_cintura, circ_cadera, circ_brazo,
+                   masa_grasa_pct, masa_muscular_pct, grasa_visceral,
+                   perimetro_abdominal, perimetro_torax,
+                   fuente_datos, avance_objetivos, cambios_habitos, notas_medicion
+            FROM historia_nutricional
+            WHERE id_paciente = %s
+            ORDER BY fecha_registro DESC, version DESC
+        """, (id_paciente_actual,))
+
+    def _historia_para_payload(h):
+        if not h:
+            return {}
+        return {
+            "id_historia": h.get("id_historia"),
+            "version": h.get("version"),
+            "fecha_medicion": str(h.get("fecha_registro") or date.today())[:10],
+            "peso": h.get("peso"),
+            "talla": h.get("talla"),
+            "imc": h.get("imc"),
+            "masa_grasa_pct": h.get("masa_grasa_pct"),
+            "masa_muscular_pct": h.get("masa_muscular_pct"),
+            "grasa_visceral": h.get("grasa_visceral"),
+            "perimetro_abdominal": h.get("perimetro_abdominal") or h.get("circ_cintura"),
+            "perimetro_cintura": h.get("circ_cintura"),
+            "perimetro_cadera": h.get("circ_cadera"),
+            "perimetro_brazo": h.get("circ_brazo"),
+            "perimetro_torax": h.get("perimetro_torax"),
+            "fuente_datos": h.get("fuente_datos"),
+            "notas": h.get("notas_medicion") or h.get("avance_objetivos") or "",
+        }
+
+    historias = _obtener_historia(id_paciente)
+    historia_actual = historias[0] if historias else None
+    base = _historia_para_payload(historia_actual)
+
+    if not historias:
+        info_banner(
+            "Este paciente todavía no tiene historia nutricional con mediciones. Podés cargar la primera medición abajo.",
+            "info",
+        )
+
+    with st.container(border=True):
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Paciente", nombre_paciente)
+        c2.metric("DNI", paciente.get("dni") or "—")
+        c3.metric("Edad", calcular_edad(paciente.get("fecha_nacimiento")) or "—")
+        c4.metric("Empresa", paciente.get("empresa") or "—")
+
+    st.markdown("### Medición a utilizar")
+    st.caption(
+        "La app precarga la última medición de historia nutricional. Al guardar, se registra una nueva versión, "
+        "así el historial queda completo y la infografía puede comparar evaluaciones."
+    )
+
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        fecha_base = base.get("fecha_medicion") or date.today()
+        fecha_medicion = st.date_input(
+            "Fecha de medición",
+            value=pd.to_datetime(fecha_base).date(),
+            key="comp_fecha_medicion",
+        )
+        peso = st.number_input("Peso (kg)", min_value=0.0, value=_safe_num(base.get("peso")), step=0.1, key="comp_peso")
+        talla = st.number_input("Talla (cm)", min_value=0.0, value=_safe_num(base.get("talla")), step=0.1, key="comp_talla")
+    with col_b:
+        imc_default = base.get("imc") or calcular_imc(peso, talla)
+        imc = st.number_input("IMC", min_value=0.0, value=_safe_num(imc_default), step=0.01, key="comp_imc")
+        masa_grasa = st.number_input("Masa grasa (%)", min_value=0.0, value=_safe_num(base.get("masa_grasa_pct")), step=0.1, key="comp_masa_grasa")
+        masa_muscular = st.number_input("Masa muscular (%)", min_value=0.0, value=_safe_num(base.get("masa_muscular_pct")), step=0.1, key="comp_masa_muscular")
+    with col_c:
+        grasa_visceral = st.number_input("Grasa visceral", min_value=0.0, value=_safe_num(base.get("grasa_visceral")), step=0.1, key="comp_visceral")
+        per_abd = st.number_input("Perímetro abdominal (cm)", min_value=0.0, value=_safe_num(base.get("perimetro_abdominal") or base.get("perimetro_cintura")), step=0.1, key="comp_per_abd")
+        per_cintura = st.number_input("Cintura (cm)", min_value=0.0, value=_safe_num(base.get("perimetro_cintura") or base.get("perimetro_abdominal")), step=0.1, key="comp_per_cintura")
+
+    col_d, col_e, col_f = st.columns(3)
+    with col_d:
+        per_cadera = st.number_input("Cadera (cm)", min_value=0.0, value=_safe_num(base.get("perimetro_cadera")), step=0.1, key="comp_per_cadera")
+    with col_e:
+        per_brazo = st.number_input("Brazo (cm)", min_value=0.0, value=_safe_num(base.get("perimetro_brazo")), step=0.1, key="comp_per_brazo")
+    with col_f:
+        per_torax = st.number_input("Tórax (cm)", min_value=0.0, value=_safe_num(base.get("perimetro_torax")), step=0.1, key="comp_per_torax")
+
+    notas_comp = st.text_area("Notas internas / observaciones", value=base.get("notas") or "", height=90, key="comp_notas")
+
+    st.markdown("### Logos")
+    st.caption("Podés cargar logo principal y logo empresa. Si el paciente es de empresa, el segundo logo se usa para co-branding.")
+    col_logo1, col_logo2 = st.columns(2)
+    with col_logo1:
+        logo_dueno_file = st.file_uploader("Logo del dueño / marca principal", type=["png", "jpg", "jpeg"], key="comp_logo_dueno")
+    with col_logo2:
+        logo_empresa_file = st.file_uploader("Logo empresa", type=["png", "jpg", "jpeg"], key="comp_logo_empresa")
+
+    version_preview = _siguiente_version_historia(id_paciente)
+    medicion_editada = {
+        "version": version_preview,
+        "fecha_medicion": str(fecha_medicion),
+        "sexo": paciente.get("genero"),
+        "edad": calcular_edad(paciente.get("fecha_nacimiento")),
+        "peso": peso or None,
+        "talla": talla or None,
+        "imc": imc or calcular_imc(peso, talla),
+        "masa_grasa_pct": masa_grasa or None,
+        "masa_muscular_pct": masa_muscular or None,
+        "grasa_visceral": grasa_visceral or None,
+        "perimetro_abdominal": per_abd or None,
+        "perimetro_cintura": per_cintura or None,
+        "perimetro_cadera": per_cadera or None,
+        "perimetro_brazo": per_brazo or None,
+        "perimetro_torax": per_torax or None,
+        "notas": notas_comp,
+        "fuente_datos": "edicion_infografia",
+    }
+
+    evaluaciones_previas = [_historia_para_payload(h) for h in reversed(historias[:3])]
+    evaluaciones_preview = evaluaciones_previas + [medicion_editada]
+
+    logo_dueno_data = logo_to_data_uri(logo_dueno_file)
+    logo_empresa_data = logo_to_data_uri(logo_empresa_file)
+    payload_comp = build_composicion_payload(
+        paciente=paciente,
+        mediciones=evaluaciones_preview,
+        medicion_actual=medicion_editada,
+        logo_dueno=logo_dueno_data,
+        logo_empresa=logo_empresa_data,
+        notas=notas_comp,
+    )
+
+    divider()
+    st.markdown("### Vista previa")
+    show_composicion_preview(payload_comp, height=900)
+
+    pdf_comp = build_composicion_pdf(payload_comp)
+    nombre_pdf_comp = f"infografia_composicion_{paciente['apellido']}_{paciente['nombre']}_{date.today()}.pdf".replace(" ", "_")
+
+    col_save, col_down = st.columns(2)
+    with col_down:
+        st.download_button(
+            "Descargar PDF de infografía",
+            data=pdf_comp,
+            file_name=nombre_pdf_comp,
+            mime="application/pdf",
+            use_container_width=True,
+            key="comp_descargar_pdf",
+        )
+
+    with col_save:
+        guardar_y_enviar = st.button("Guardar y enviar al paciente", type="primary", use_container_width=True, key="comp_guardar_enviar")
+
+    if guardar_y_enviar:
+        if not peso or not talla:
+            st.error("Peso y talla son obligatorios para guardar la medición e infografía.")
+        else:
+            try:
+                version_hist = _siguiente_version_historia(id_paciente)
+                id_contrato = contrato[0]["id_contrato"] if contrato else None
+                id_nutricionista = id_nutri or (contrato[0].get("id_nutricionista") if contrato else None)
+                imc_final = imc or calcular_imc(peso, talla)
+
+                run_command("""
+                    INSERT INTO historia_nutricional
+                        (id_paciente, id_sesion, version, peso, talla, imc,
+                         circ_cintura, circ_cadera, circ_brazo,
+                         masa_grasa_pct, masa_muscular_pct, grasa_visceral,
+                         perimetro_abdominal, perimetro_torax,
+                         fuente_datos, notas_medicion, creado_por)
+                    VALUES (%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'edicion_infografia',%s,%s)
+                """, (
+                    id_paciente,
+                    version_hist,
+                    peso or None,
+                    talla or None,
+                    imc_final,
+                    per_cintura or None,
+                    per_cadera or None,
+                    per_brazo or None,
+                    masa_grasa or None,
+                    masa_muscular or None,
+                    grasa_visceral or None,
+                    per_abd or None,
+                    per_torax or None,
+                    notas_comp,
+                    usuario.get("id_usuario"),
+                ))
+
+                payload_comp["medicion_actual"]["version"] = version_hist
+                contenido_json = json.dumps(payload_comp, ensure_ascii=False)
+                contenido_texto = f"Infografía de composición corporal - {nombre_paciente} - {fecha_medicion}"
+
+                ultima_version_doc = run_query("""
+                    SELECT COALESCE(MAX(version), 0) AS v
+                    FROM planes_nutricionales
+                    WHERE id_paciente = %s
+                """, (id_paciente,))
+                nueva_version_doc = int(ultima_version_doc[0]["v"] or 0) + 1
+
+                run_command("""
+                    INSERT INTO planes_nutricionales
+                        (id_paciente, id_contrato, id_nutricionista,
+                         version, titulo, contenido, contenido_json,
+                         estado, fecha_vigencia, archivo_url)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, 'activo', %s, %s)
+                """, (
+                    id_paciente,
+                    id_contrato,
+                    id_nutricionista,
+                    nueva_version_doc,
+                    "Infografía de composición corporal",
+                    contenido_texto,
+                    contenido_json,
+                    date.today() + timedelta(days=30),
+                    None,
+                ))
+
+                email_ok, email_msg = send_plan_email(
+                    to_email=paciente.get("email", ""),
+                    patient_name=nombre_paciente,
+                    pdf_bytes=pdf_comp,
+                    pdf_filename=nombre_pdf_comp,
+                    subject="Tu infografía de composición corporal",
+                )
+
+                st.success("Infografía guardada correctamente.")
+                if email_ok:
+                    st.success("La infografía se envió por email al paciente.")
+                else:
+                    st.warning(f"Infografía guardada, pero el email no se envió: {email_msg}")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error al guardar la infografía: {e}")

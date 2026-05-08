@@ -4,9 +4,9 @@ import pandas as pd
 from database import run_query, run_command
 from datetime import date, datetime, timedelta
 
-# ─────────────────────────────────────────
+
 # CONTROL DE ACCESO
-# ─────────────────────────────────────────
+
 if "usuario" not in st.session_state:
     st.warning("Debés iniciar sesión.")
     st.stop()
@@ -18,9 +18,9 @@ if st.session_state["usuario"]["rol"] not in ("administrador", "nutricionista"):
 usuario = st.session_state["usuario"]
 es_admin = usuario["rol"] == "administrador"
 
-# ─────────────────────────────────────────
+
 # PÁGINA
-# ─────────────────────────────────────────
+
 
 mostrar_sidebar()
 
@@ -52,9 +52,9 @@ st.markdown("---")
 tab1, tab2 = st.tabs(["Ver slots", "Cargar slots"])
 
 
-# ═══════════════════════════════════════
-# TAB 1 — VER SLOTS
-# ═══════════════════════════════════════
+
+# VER SLOTS
+
 with tab1:
     col1, col2 = st.columns(2)
     with col1:
@@ -129,9 +129,9 @@ with tab1:
         st.info("No hay slots para el período seleccionado.")
 
 
-# ═══════════════════════════════════════
-# TAB 2 — CARGAR SLOTS
-# ═══════════════════════════════════════
+
+# CARGAR SLOTS
+
 with tab2:
     st.subheader("Cargar disponibilidad")
 

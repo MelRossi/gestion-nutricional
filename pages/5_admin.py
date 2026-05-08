@@ -21,7 +21,7 @@ pendientes = run_query("""
 if pendientes[0]["n"] > 0:
     info_banner(f"Hay {pendientes[0]['n']} nutricionista(s) pendiente(s) de aprobación.", "warning")
 
-tab1, tab2, tab3, tab4 = st.tabs(["Aprobaciones", "Usuarios", "Programas", "Resumen BD"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Aprobaciones", "Usuarios", "Programas", "Resumen BD", "Links onboarding"])
 
 
 # APROBACIONES
@@ -405,3 +405,59 @@ with tab4:
         count = run_query(f"SELECT COUNT(*) AS n FROM {tabla}")
         resultados.append({"Tabla": tabla, "Registros": count[0]["n"]})
     st.dataframe(pd.DataFrame(resultados), use_container_width=True)
+
+
+# LINKS ONBOARDING
+
+with tab5:
+    st.subheader("Links de onboarding")
+    st.caption("Copiá estos links para enviar a pacientes según corresponda.")
+
+    try:
+        base_url = st.secrets.get("APP_BASE_URL", "")
+    except Exception:
+        base_url = ""
+
+    if not base_url:
+        base_url = st.text_input(
+            "URL base de la app",
+            value="https://tu-app.streamlit.app",
+            help="Reemplazá por la URL real de tu app publicada.",
+            key="admin_links_base_url",
+        )
+
+    base_url = (base_url or "").rstrip("/")
+
+    link_persona = f"{base_url}/registro?tipo=persona"
+    link_empresa = f"{base_url}/registro?tipo=empresa"
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("### Paciente individual")
+        st.code(link_persona, language="text")
+        st.caption("Usar para pacientes que compran o ingresan como persona individual.")
+
+    with col2:
+        st.markdown("### Paciente empresa")
+        st.code(link_empresa, language="text")
+        st.caption("Usar para colaboradores o pacientes derivados por empresa.")
+
+    st.markdown("---")
+    st.info(
+        "Para que la URL base se complete automáticamente, podés agregar APP_BASE_URL "
+        "en los secrets de Streamlit. Ejemplo: APP_BASE_URL='https://tu-app.streamlit.app'"
+    )
+
+    formularios = run_query("""
+        SELECT id_formulario, nombre, tipo_formulario, activo
+        FROM formularios_onboarding
+        ORDER BY tipo_formulario, id_formulario
+    """)
+
+    if formularios:
+        st.markdown("### Formularios configurados")
+        st.dataframe(pd.DataFrame(formularios), use_container_width=True, hide_index=True)
+    else:
+        st.warning("No se encontraron formularios de onboarding activos.")
+

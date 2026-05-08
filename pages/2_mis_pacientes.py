@@ -9,9 +9,9 @@ from database import run_query, run_command
 from utils import mostrar_sidebar, page_header, info_banner
 
 
-# ─────────────────────────────────────────
+
 # CONTROL DE ACCESO
-# ─────────────────────────────────────────
+
 if "usuario" not in st.session_state:
     st.warning("Debés iniciar sesión.")
     st.stop()
@@ -29,9 +29,8 @@ mostrar_sidebar()
 page_header("Pacientes")
 
 
-# ─────────────────────────────────────────
 # HELPERS
-# ─────────────────────────────────────────
+
 def normalizar(texto):
     if not texto:
         return ""
@@ -360,9 +359,8 @@ def render_tabla_pacientes(registros, incluir_nutricionista=False, key_prefix="p
         render_desempeno_paciente(int(seleccion["id_paciente"]))
 
 
-# ═══════════════════════════════════════════
 # VISTA ADMIN
-# ═══════════════════════════════════════════
+
 if rol == "administrador":
 
     solicitudes = run_query(
@@ -724,9 +722,9 @@ if rol == "administrador":
     )
 
 
-# ═══════════════════════════════════════════
+
 # VISTA NUTRICIONISTA
-# ═══════════════════════════════════════════
+
 else:
     tab1, tab2 = st.tabs(["Pacientes", "Solicitar acceso a paciente"])
 

@@ -8,9 +8,9 @@ st.set_page_config(
     layout="wide"
 )
 
-# ─────────────────────────────────────────
+
 # ESTADO DE SESIÓN DEL FLUJO DE COMPRA
-# ─────────────────────────────────────────
+
 if "paso_compra" not in st.session_state:
     st.session_state["paso_compra"] = 1
 if "programa_elegido" not in st.session_state:
@@ -25,9 +25,9 @@ def resetear_flujo():
     st.session_state["datos_comprador"] = {}
 
 
-# ─────────────────────────────────────────
+
 # ENCABEZADO
-# ─────────────────────────────────────────
+
 col_logo, col_login = st.columns([6, 1])
 with col_logo:
     st.markdown("## Gisella - Nutrición Profesional")
@@ -41,9 +41,9 @@ with col_login:
 
 st.markdown("---")
 
-# ─────────────────────────────────────────
+
 # INDICADOR DE PASOS
-# ─────────────────────────────────────────
+
 paso = st.session_state["paso_compra"]
 pasos = ["1️⃣ Elegí tu programa", "2️⃣ Tus datos", "3️⃣ Términos y condiciones", "4️⃣ Pago"]
 cols_pasos = st.columns(4)
@@ -58,9 +58,9 @@ for i, (col, texto) in enumerate(zip(cols_pasos, pasos), 1):
 st.markdown("---")
 
 
-# ═══════════════════════════════════════
+
 # PASO 1 — ELEGIR PROGRAMA
-# ═══════════════════════════════════════
+
 if paso == 1:
     st.subheader("Nuestros programas")
     st.caption("Todos los programas incluyen seguimiento personalizado con nutricionista.")
@@ -102,9 +102,9 @@ if paso == 1:
                     st.rerun()
 
 
-# ═══════════════════════════════════════
+
 # PASO 2 — DATOS DEL COMPRADOR
-# ═══════════════════════════════════════
+
 elif paso == 2:
     prog = st.session_state["programa_elegido"]
     st.subheader(f"Programa seleccionado: **{prog['nombre']}** — S/ {prog['precio_base']:,.2f}")
@@ -153,9 +153,9 @@ elif paso == 2:
             st.rerun()
 
 
-# ═══════════════════════════════════════
+
 # PASO 3 — TÉRMINOS Y CONDICIONES
-# ═══════════════════════════════════════
+
 elif paso == 3:
     prog = st.session_state["programa_elegido"]
     datos = st.session_state["datos_comprador"]
@@ -210,9 +210,9 @@ personales y clínicos conforme a la política de privacidad del servicio.
             st.rerun()
 
 
-# ═══════════════════════════════════════
+
 # PASO 4 — PAGO (MOCK)
-# ═══════════════════════════════════════
+
 elif paso == 4:
     prog = st.session_state["programa_elegido"]
     datos = st.session_state["datos_comprador"]
@@ -311,9 +311,9 @@ elif paso == 4:
                 st.error(f"Error al procesar la solicitud: {e}")
 
 
-# ═══════════════════════════════════════
+
 # PASO 5 — CONFIRMACIÓN
-# ═══════════════════════════════════════
+
 elif paso == 5:
     email = st.session_state.get("email_comprador", "")
 

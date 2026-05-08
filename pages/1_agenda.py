@@ -908,7 +908,7 @@ with tab_hoy:
 
                 with c3:
                     if s["estado"] == "programada":
-                        ca, cb = st.columns(2)
+                        ca, cb, cc = st.columns(3)
 
                         with ca:
                             if st.button(
@@ -939,6 +939,19 @@ with tab_hoy:
                                     "UPDATE sesiones SET estado='ausente' WHERE id_sesion=%s",
                                     (s["id_sesion"],),
                                 )
+                                st.rerun()
+
+                        with cc:
+                            if st.button(
+                                "Cancelar",
+                                key=f"cancelar_{s['id_sesion']}",
+                                use_container_width=True,
+                            ):
+                                run_command(
+                                    "UPDATE sesiones SET estado='cancelada' WHERE id_sesion=%s",
+                                    (s["id_sesion"],),
+                                )
+                                limpiar_reserva_disponibilidad(s["id_sesion"])
                                 st.rerun()
 
 
@@ -1643,6 +1656,18 @@ if rol == "nutricionista":
                                 "UPDATE sesiones SET estado='ausente' WHERE id_sesion=%s",
                                 (t["id_sesion"],),
                             )
+                            st.rerun()
+
+                        if st.button(
+                            "Cancelar sesión",
+                            key=f"cancelar_turno_{t['id_sesion']}",
+                            use_container_width=True,
+                        ):
+                            run_command(
+                                "UPDATE sesiones SET estado='cancelada' WHERE id_sesion=%s",
+                                (t["id_sesion"],),
+                            )
+                            limpiar_reserva_disponibilidad(t["id_sesion"])
                             st.rerun()
 
                     with c3:

@@ -1,4 +1,5 @@
 import io
+import json
 from datetime import date, datetime, timedelta, time
 
 import pandas as pd
@@ -6,10 +7,12 @@ import streamlit as st
 
 from database import run_query, run_command
 from utils import mostrar_sidebar, page_header, info_banner
+from composicion_utils import build_composicion_pdf, show_composicion_preview
+from plan_utils import build_plan_pdf, read_plan_record, show_plan_preview
 
 
 if "usuario" not in st.session_state:
-    st.warning("Debés iniciar sesión.")
+    st.warning("Debes iniciar sesión.")
     st.stop()
 
 usuario = st.session_state["usuario"]
@@ -1381,6 +1384,7 @@ with tab4:
                pn.version,
                pn.titulo,
                pn.contenido,
+               pn.contenido_json,
                pn.estado,
                pn.fecha_creacion,
                pn.fecha_vigencia,
@@ -1405,15 +1409,52 @@ with tab4:
         sel_plan = st.selectbox("Seleccionar plan", list(opciones_planes.keys()))
         plan = opciones_planes[sel_plan]
 
+        contenido_json = plan.get("contenido_json")
+        if isinstance(contenido_json, str):
+            try:
+                contenido_json = json.loads(contenido_json)
+            except Exception:
+                contenido_json = None
+
+        es_composicion = isinstance(contenido_json, dict) and contenido_json.get("tipo") == "composicion_corporal"
+        tipo_doc = "Infografía corporal" if es_composicion else "Plan nutricional"
+
         st.caption(
-            f"Nutricionista: {val(plan.get('nutricionista'))} · Estado: {val(plan.get('estado'))} · Vigencia: {fmt_fecha(plan.get('fecha_vigencia'))}"
+            f"Tipo: {tipo_doc} · Nutricionista: {val(plan.get('nutricionista'))} · Estado: {val(plan.get('estado'))} · Vigencia: {fmt_fecha(plan.get('fecha_vigencia'))}"
         )
 
         if plan.get("archivo_url"):
             st.markdown(f"Archivo asociado: `{plan['archivo_url']}`")
 
-        with st.expander("Ver contenido"):
-            st.write(plan.get("contenido") or "—")
+        if es_composicion:
+            pdf_doc = build_composicion_pdf(contenido_json)
+            st.download_button(
+                "Descargar infografía PDF",
+                data=pdf_doc,
+                file_name=f"infografia_composicion_v{plan['version']}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                key=f"ficha_descargar_comp_{plan['id_plan']}",
+            )
+            with st.expander("Vista previa"):
+                show_composicion_preview(contenido_json, height=850)
+        else:
+            parsed = read_plan_record(plan)
+            if parsed.get("kind") == "structured":
+                pdf_doc = build_plan_pdf(parsed["data"])
+                st.download_button(
+                    "Descargar plan PDF",
+                    data=pdf_doc,
+                    file_name=f"plan_v{plan['version']}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                    key=f"ficha_descargar_plan_{plan['id_plan']}",
+                )
+                with st.expander("Vista previa"):
+                    show_plan_preview(parsed["data"], height=850)
+            else:
+                with st.expander("Ver contenido"):
+                    st.write(plan.get("contenido") or "—")
 
     if rol in ("administrador", "nutricionista"):
         if st.button("Crear / cargar plan nutricional", type="primary", use_container_width=True):
@@ -1507,7 +1548,7 @@ with tab5:
 
                     accion_sesion = st.radio(
                         "Acción",
-                        ["Marcar atendida", "Marcar ausente", "Reprogramar"],
+                        ["Marcar atendida", "Marcar ausente", "Cancelar sesión", "Reprogramar"],
                         horizontal=True,
                         key="ficha_accion_sesion",
                     )
@@ -1564,6 +1605,43 @@ with tab5:
                                     (sesion_data["id_sesion"],),
                                 )
                                 st.success("Sesión marcada como ausente.")
+                                st.rerun()
+
+                    elif accion_sesion == "Cancelar sesión":
+                        st.warning(
+                            "La sesión quedará cancelada y se liberará el horario asociado si existía una reserva en disponibilidad."
+                        )
+
+                        motivo_cancelacion = st.text_input(
+                            "Motivo de cancelación",
+                            placeholder="Ej: cancelación solicitada por paciente / cambio administrativo...",
+                            key="ficha_motivo_cancelacion",
+                        )
+
+                        confirmar_cancelacion = st.checkbox(
+                            "Confirmo que quiero cancelar esta sesión",
+                            key="ficha_confirmar_cancelacion",
+                        )
+
+                        col_esp, col_btn = st.columns([3, 1])
+                        with col_btn:
+                            if st.button(
+                                "Guardar cancelada",
+                                use_container_width=True,
+                                key="ficha_guardar_cancelada",
+                                disabled=not confirmar_cancelacion,
+                            ):
+                                run_command(
+                                    """
+                                    UPDATE sesiones
+                                    SET estado = 'cancelada',
+                                        motivo_reprogramacion = COALESCE(NULLIF(%s, ''), motivo_reprogramacion)
+                                    WHERE id_sesion = %s
+                                    """,
+                                    (motivo_cancelacion, sesion_data["id_sesion"]),
+                                )
+                                limpiar_reserva_disponibilidad(sesion_data["id_sesion"])
+                                st.success("Sesión cancelada correctamente.")
                                 st.rerun()
 
                     else:

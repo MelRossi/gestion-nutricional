@@ -22,7 +22,7 @@ page_header("Carga manual de formulario", "Carga las respuestas de un formulario
 st.info("Usa esta sección cuando el paciente completó el formulario fuera del sistema (Tally, papel, etc.) y querés registrar sus datos manualmente.")
 
 # ── Selección de paciente ──
-st.markdown("### 1. Seleccioná el paciente")
+st.markdown("### 1. Selecciona el paciente")
 
 pacientes = run_query("""
     SELECT p.id_paciente,
@@ -42,7 +42,7 @@ paciente = pac_opts[pac_sel_key]
 id_paciente = paciente["id_paciente"]
 
 # ── Selección de formulario ──
-st.markdown("### 2. Seleccioná el formulario")
+st.markdown("### 2. Selecciona el formulario")
 
 formularios = run_query("""
     SELECT id_formulario, nombre, tipo_formulario
@@ -73,8 +73,8 @@ if isinstance(estructura, str):
 secciones = estructura.get("secciones", [])
 
 st.markdown("---")
-st.markdown("### 3. Completá las respuestas")
-st.caption("Completá los campos según las respuestas que dio el paciente en el formulario externo.")
+st.markdown("### 3. Completa las respuestas")
+st.caption("Completa los campos según las respuestas que dio el paciente en el formulario externo.")
 
 respuestas = {}
 
@@ -119,7 +119,7 @@ for seccion in secciones:
                 respuestas[pid] = st.checkbox(label, key=key)
 
             elif tipo == "file":
-                st.caption(f"{label} — adjuntá el archivo por separado si es necesario.")
+                st.caption(f"📎 {label} — adjuntá el archivo por separado si es necesario.")
                 respuestas[pid] = st.text_input(f"Referencia del archivo (opcional)", key=key)
 
 st.markdown("---")
@@ -134,7 +134,7 @@ st.markdown("---")
 
 col1, col2 = st.columns(2)
 with col2:
-    if st.button("Guardar respuestas", use_container_width=True, type="primary"):
+    if st.button("Guardar respuestas en el sistema", use_container_width=True, type="primary"):
         try:
             resp_json = dict(respuestas)
             resp_json["_preferencia_turno"] = preferencia_turno
@@ -147,13 +147,24 @@ with col2:
             """, (id_formulario, id_paciente,
                   json.dumps(resp_json, ensure_ascii=False, default=str)))
 
-            # Actualizar datos básicos del paciente
+            # Detectar tipo de formulario para mapear bien los campos básicos.
+            tipo_formulario = formulario.get("tipo_formulario") or "persona"
             nombre   = respuestas.get("1_1", "")
             apellido = respuestas.get("1_2", "")
             dni      = respuestas.get("1_3", "")
-            celular  = respuestas.get("1_4", "")
-            fecha_nac = respuestas.get("1_5") or respuestas.get("1_4")
-            email    = respuestas.get("1_7") or respuestas.get("1_6", "")
+
+            if tipo_formulario == "empresa":
+                celular = ""
+                fecha_nac = respuestas.get("1_4")
+                genero = respuestas.get("1_5", "")
+                email = respuestas.get("1_6", "")
+                tipo_paciente = "empresa"
+            else:
+                celular = respuestas.get("1_4", "")
+                fecha_nac = respuestas.get("1_5")
+                genero = ""
+                email = respuestas.get("1_7", "")
+                tipo_paciente = "persona"
 
             run_command("""
                 UPDATE pacientes SET
@@ -162,13 +173,56 @@ with col2:
                     dni              = COALESCE(NULLIF(%s,''), dni),
                     telefono         = COALESCE(NULLIF(%s,''), telefono),
                     fecha_nacimiento = COALESCE(%s::date, fecha_nacimiento),
+                    genero           = COALESCE(NULLIF(%s,''), genero),
                     email            = COALESCE(NULLIF(%s,''), email),
+                    tipo_paciente    = COALESCE(NULLIF(%s,''), tipo_paciente),
                     onboarding_paso  = 5
                 WHERE id_paciente = %s
-            """, (nombre, apellido, dni, celular, fecha_nac, email, id_paciente))
+            """, (nombre, apellido, dni, celular, fecha_nac, genero, email, tipo_paciente, id_paciente))
+
+            # Guardar mediciones numéricas en historia_nutricional, que queda como fuente única
+            # para evolución + infografía. Si no hay mediciones, no se inserta historia.
+            def _to_float(v):
+                try:
+                    if v in (None, "", "None"):
+                        return None
+                    return float(v)
+                except Exception:
+                    return None
+
+            peso = _to_float(respuestas.get("8_2"))
+            talla = _to_float(respuestas.get("8_1"))
+            per_torax = _to_float(respuestas.get("8_3"))
+            per_brazo = _to_float(respuestas.get("8_4"))
+            per_cintura = _to_float(respuestas.get("8_5"))
+            per_abdomen = _to_float(respuestas.get("8_6"))
+            per_cadera = _to_float(respuestas.get("8_7"))
+
+            if any(v is not None for v in [peso, talla, per_torax, per_brazo, per_cintura, per_abdomen, per_cadera]):
+                prox = run_query("""
+                    SELECT COALESCE(MAX(version), 0) + 1 AS version
+                    FROM historia_nutricional
+                    WHERE id_paciente = %s
+                """, (id_paciente,))
+                version_hist = int(prox[0]["version"] or 1)
+                imc = round(peso / ((talla / 100) ** 2), 2) if peso and talla else None
+
+                run_command("""
+                    INSERT INTO historia_nutricional
+                        (id_paciente, id_sesion, version, peso, talla, imc,
+                         circ_cintura, circ_cadera, circ_brazo,
+                         perimetro_torax, perimetro_abdominal,
+                         fuente_datos, notas_medicion, creado_por)
+                    VALUES (%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,'carga_manual',%s,%s)
+                """, (
+                    id_paciente, version_hist, peso, talla, imc,
+                    per_cintura, per_cadera, per_brazo, per_torax, per_abdomen,
+                    "Medición cargada manualmente desde formulario externo",
+                    usuario.get("id_usuario"),
+                ))
 
             st.success(f"Respuestas de {paciente['nombre']} guardadas correctamente.")
-            st.info("Los datos de anamnesis e historia se actualizarán automáticamente desde la ficha del paciente.")
+            st.info("Las respuestas completas quedaron en onboarding_respuestas; las mediciones se registraron en historia_nutricional si estaban presentes.")
 
         except Exception as e:
             st.error(f"Error al guardar: {e}")

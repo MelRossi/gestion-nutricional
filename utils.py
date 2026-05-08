@@ -6,11 +6,8 @@ import streamlit as st
 # CARGA DE ESTILOS
 
 def cargar_estilos():
-    """
-    Carga el archivo styles.CCS ubicado en la raíz del proyecto.
-    Única fuente de estilos globales para evitar competencia de CSS.
-    """
-    ruta_css = os.path.join(os.path.dirname(__file__), "styles.CCS")
+
+    ruta_css = os.path.join(os.path.dirname(__file__), "styles.css")
     if os.path.exists(ruta_css):
         with open(ruta_css, "r", encoding="utf-8") as f:
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
@@ -111,7 +108,7 @@ def mostrar_sidebar():
             st.page_link("pages/3_ficha_paciente.py", label="Ficha del paciente")
             st.page_link("pages/3b_cargar_plan.py", label="Cargar plan")
             st.page_link("pages/carga_manual_onboarding.py", label="Carga manual formulario")
-            st.page_link("pages/4_pagos.py", label="Pagos")
+            st.page_link("pages/4_pagos.py", label="Pagos y programas")
 
         elif rol == "nutricionista":
             _nav_label("MI TRABAJO")

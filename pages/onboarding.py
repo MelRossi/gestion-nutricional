@@ -241,9 +241,9 @@ for i, label in enumerate(pasos_labels, 1):
 st.markdown(f'<div class="steps-row">{chips_html}</div>', unsafe_allow_html=True)
 st.markdown('<div class="onb-divider"></div>', unsafe_allow_html=True)
 
-# ═══════════════════════════
+
 # PASO 1 — DATOS PERSONALES
-# ═══════════════════════════
+
 if paso == 0:
     st.subheader("Paso 1 — Tus datos personales")
 
@@ -295,9 +295,9 @@ if paso == 0:
             st.session_state["usuario"]["apellido"] = apellido
             avanzar_paso(1)
 
-# ═══════════════════════════
+
 # PASO 2 — CONSENTIMIENTO
-# ═══════════════════════════
+
 elif paso == 1:
     st.subheader("Paso 2 — Consentimiento informado")
     nombre_completo = f"{p['nombre']} {p['apellido']}"
@@ -339,9 +339,9 @@ Autorizo el uso de mis datos personales y clinicos para fines del tratamiento, e
             )
             avanzar_paso(2)
 
-# ═══════════════════════════
+
 # PASO 3 — ELEGIR TURNO
-# ═══════════════════════════
+
 elif paso == 2:
     st.subheader("Paso 3 — Elegí tu primera sesion")
 
@@ -522,9 +522,9 @@ elif paso == 2:
         if st.button("Volver", use_container_width=True, key="volver_p3"):
             avanzar_paso(1)
 
-# ═══════════════════════════
+
 # PASO 4 — ANAMNESIS
-# ═══════════════════════════
+
 elif paso == 3:
     st.subheader("Paso 4 — Tu historia clinica")
     st.caption("Esta informacion es confidencial y ayuda a tu nutricionista a personalizar tu plan.")
@@ -579,9 +579,9 @@ elif paso == 3:
             else:
                 avanzar_paso(5)
 
-# ═══════════════════════════
+
 # PASO 5 — HISTORIA NUTRICIONAL
-# ═══════════════════════════
+
 elif paso == 4:
     st.subheader("Paso 5 — Medidas corporales")
     st.caption("Para sesiones virtuales necesitamos estos datos para preparar tu primera consulta.")
@@ -623,9 +623,9 @@ elif paso == 4:
             """, (id_paciente, c["id_contrato"], peso, talla, imc, cintura, cadera, brazo, avances or None))
             avanzar_paso(5)
 
-# ═══════════════════════════
+
 # ONBOARDING COMPLETO
-# ═══════════════════════════
+
 elif paso >= 5:
     st.success("## Todo listo!")
 

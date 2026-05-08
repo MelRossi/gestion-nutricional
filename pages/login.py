@@ -47,7 +47,7 @@ def verificar_login(email, password):
         "id_paciente":      usuario[7],
     }, None
 
-# ─────────────────────────────────────────
+
 col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
     st.page_link("app.py", label="← Volver al inicio")

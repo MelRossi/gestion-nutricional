@@ -1,5 +1,5 @@
-# -*- coding: utf-8 -*-
 import io
+import base64
 import json
 import os
 import re
@@ -24,14 +24,13 @@ from reportlab.platypus import (
     Spacer,
     Table,
     TableStyle,
-    PageBreak,
+    Image,
 )
 
 PRIMARY = "#00DC8E"
 TEXT = "#5F6368"
 BORDER = "#00DC8E"
 LIGHT_BG = "#F5F7F7"
-
 
 # ============================================================
 # JSON / LEGACY
@@ -103,9 +102,9 @@ def read_template_record(row: Dict[str, Any]) -> Dict[str, Any]:
     return default_template_structured("Modelo base")
 
 
-# ============================================================
+
 # MODELO BASE
-# ============================================================
+
 
 def _blank_day() -> Dict[str, str]:
     return {
@@ -190,9 +189,9 @@ def build_patient_plan_payload(
     }
 
 
-# ============================================================
+
 # NORMALIZACIÓN
-# ============================================================
+
 
 def _normalize_text(value: Any) -> str:
     if value is None:
@@ -297,9 +296,9 @@ def plain_text_summary_from_plan(plan_data: Dict[str, Any]) -> str:
     return "\n".join(lines).strip()
 
 
-# ============================================================
+
 # HTML HELPERS
-# ============================================================
+
 
 def _esc(text: Any) -> str:
     return escape(str(text or "—"))
@@ -332,552 +331,408 @@ def _render_day_row(plan: Dict[str, Any], section_key: str, label: str, qty_html
     """
 
 
-# ============================================================
+
 # RENDER HTML PREVIEW
-# ============================================================
+
+
+PLAN_UTILS_LAYOUT_VERSION = "plantilla_referencia_preview_estable_v2026_05_07_aire_visual"
 
 
 def _inline_text(items: List[str]) -> str:
-    """Render items as inline text separated by · for wide rows."""
     if not items:
         return "<span class='empty'>—</span>"
-    text = " · ".join(escape(str(i)) for i in items if i)
-    return f"<span style='font-size:11px;line-height:1.3'>{text}</span>"
+    return " · ".join(escape(str(i)) for i in items if str(i).strip())
+
+
+def _logos_html(plan: Dict[str, Any]) -> str:
+    logos = plan.get("logos") or {}
+    tags = []
+    for key in ("dueno", "empresa"):
+        src = logos.get(key)
+        if src:
+            tags.append(f"<img class='plan-logo' src='{src}' />")
+    if not tags:
+        return ""
+    return "<div class='logos-wrap'>" + "".join(tags) + "</div>"
+
+
+def _html_bullets(items: List[str], *, compact: bool = False) -> str:
+    if not items:
+        return "<span class='empty'>—</span>"
+    cls = "bullets compact" if compact else "bullets"
+    return f"<ul class='{cls}>" + "".join(f"<li>{_esc(x)}</li>" for x in items if str(x).strip()) + "</ul>"
+
+
+def _html_bullet_list(items: List[str], *, compact: bool = False) -> str:
+    if not items:
+        return "<span class='empty'>—</span>"
+    cls = "bullets compact" if compact else "bullets"
+    return f"<ul class='{cls}'>" + "".join(f"<li>{_esc(x)}</li>" for x in items if str(x).strip()) + "</ul>"
 
 
 def render_plan_html(plan_data: Dict[str, Any], page: int = 1) -> str:
+    """Vista previa HTML estable usando tablas reales, no grids híbridos."""
     plan = normalize_plan_for_render(plan_data)
     pac = plan.get("paciente", {})
     cab = plan.get("cabecera", {})
 
-    header_html = f"""
-    <div class="top-band">{_esc(cab.get('titulo', 'PLAN DE ALIMENTACIÓN'))}</div>
+    title = _esc(cab.get("titulo", "PLAN DE ALIMENTACIÓN"))
+    logos_html = _logos_html(plan)
 
-    <div class="header-area">
-        <div class="patient-box">
-            <div class="patient-row"><div class="left">DNI</div><div class="right">{_esc(pac.get('dni') or '—')}</div></div>
-            <div class="patient-row"><div class="left">Nombres</div><div class="right">{_esc(pac.get('nombres') or '—')}</div></div>
-            <div class="patient-row"><div class="left">Apellidos</div><div class="right">{_esc(pac.get('apellidos') or '—')}</div></div>
-            <div class="patient-row"><div class="left">Objetivo</div><div class="right">{_esc(cab.get('objetivo') or '—')}</div></div>
-            <div class="patient-row"><div class="left">Alergias</div><div class="right">{_esc(cab.get('alergias') or '—')}</div></div>
-            <div class="patient-row"><div class="left">Intolerancias</div><div class="right">{_esc(cab.get('intolerancias') or '—')}</div></div>
-        </div>
+    patient_rows = "".join([
+        f"<tr><th>DNI</th><td>{_esc(pac.get('dni') or '—')}</td></tr>",
+        f"<tr><th>Nombres</th><td>{_esc(pac.get('nombres') or '—')}</td></tr>",
+        f"<tr><th>Apellidos</th><td>{_esc(pac.get('apellidos') or '—')}</td></tr>",
+        f"<tr><th>Objetivo</th><td>{_esc(cab.get('objetivo') or '—')}</td></tr>",
+        f"<tr><th>Alergias</th><td>{_esc(cab.get('alergias') or '—')}</td></tr>",
+        f"<tr><th>Intolerancias</th><td>{_esc(cab.get('intolerancias') or '—')}</td></tr>",
+    ])
 
-        <div class="diagnosis-wrap">
-            <div class="diagnosis-label">Diagnóstico Nutricional</div>
-            <div class="diagnosis-content">{_html_list(plan.get('diagnostico_items', []))}</div>
-        </div>
-    </div>
-    """
+    def day_cells(section_key: str) -> str:
+        cells = []
+        for i in range(1, 8):
+            value = plan["dias"].get(f"dia_{i}", {}).get(section_key, "") or "—"
+            cells.append(f"<td class='meal-cell'>{_cell_text(value)}</td>")
+        return "".join(cells)
 
-    quantities_1 = _html_list(plan.get("cantidades_items", [])[:5], center=True)
-    quantities_2 = _html_list(plan.get("cantidades_items", [])[5:9], center=True)
-    quantities_3 = _html_list(plan.get("cantidades_items", [])[9:14], center=True)
+    cantidades = plan.get("cantidades_items", [])
 
-    main_table = f"""
-    <div class="days-header">
-        <div class="label-head"></div>
-        <div class="day-head">DÍA 1</div>
-        <div class="day-head">DÍA 2</div>
-        <div class="day-head">DÍA 3</div>
-        <div class="day-head">DÍA 4</div>
-        <div class="day-head">DÍA 5</div>
-        <div class="day-head">DÍA 6</div>
-        <div class="day-head">DÍA 7</div>
-        <div class="qty-head">Cantidades</div>
-    </div>
-
-    {_render_day_row(plan, 'desayuno', 'Desayuno', quantities_1)}
-
-    <div class="row-wide">
-        <div class="row-label wide-label">1/2 mañana<br>1/2 tarde</div>
-        <div class="row-wide-content span-7">{_inline_text(plan.get('media_items', []))}</div>
-        <div class="qty-col short">{quantities_2}</div>
-    </div>
-
-    <div class="row-wide">
-        <div class="row-label wide-label">Ensalada</div>
-        <div class="row-wide-content span-7">{_inline_text(plan.get('ensalada_items', []))}</div>
-        <div class="qty-col short">{quantities_3}</div>
-    </div>
-
-    {_render_day_row(plan, 'almuerzo', 'Almuerzo')}
-    {_render_day_row(plan, 'cena', 'Cena')}
-    """
-
-    bottom_html = f"""
-    <div class="bottom-grid">
-        <div class="bottom-box left-box">
-            <div class="bottom-title">Recomendaciones</div>
-            {_html_list(plan.get('recomendaciones_items', []))}
-        </div>
-        <div class="bottom-box right-box">
-            <div class="bottom-title">Consejos Claves</div>
-            {_html_list(plan.get('consejos_items', []))}
-        </div>
-    </div>
-    """
-
-    return f"""
+    html = f"""
     <html>
     <head>
-        <style>
-            * {{
-                box-sizing: border-box;
-            }}
-            body {{
-                margin: 0;
-                padding: 10px;
-                background: #ffffff;
-                font-family: Arial, Helvetica, sans-serif;
-                color: {TEXT};
-            }}
-            .page {{
-                border: 1px solid #cfd8dc;
-                padding: 0;
-                background: white;
-            }}
-            .top-band {{
-                background: {PRIMARY};
-                color: white;
-                text-align: center;
-                font-weight: 700;
-                font-size: 19px;
-                text-transform: uppercase;
-                padding: 9px 10px;
-                letter-spacing: .2px;
-            }}
-            .header-area {{
-                display: grid;
-                grid-template-columns: 1.05fr 1fr;
-                gap: 12px;
-                padding: 12px;
-            }}
-            .patient-box {{
-                border: 1px solid {BORDER};
-            }}
-            .patient-row {{
-                display: grid;
-                grid-template-columns: 126px 1fr;
-                min-height: 30px;
-                border-bottom: 1px solid {BORDER};
-            }}
-            .patient-row:last-child {{
-                border-bottom: none;
-            }}
-            .patient-row .left {{
-                background: {PRIMARY};
-                color: white;
-                font-weight: 700;
-                font-size: 12px;
-                display: flex;
-                align-items: center;
-                padding: 6px 10px;
-            }}
-            .patient-row .right {{
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                text-align: center;
-                font-size: 12px;
-                line-height: 1.25;
-                padding: 6px 10px;
-            }}
-            .diagnosis-wrap {{
-                display: grid;
-                grid-template-columns: 180px 1fr;
-                border: 1px solid {BORDER};
-                min-height: 176px;
-            }}
-            .diagnosis-label {{
-                background: {PRIMARY};
-                color: white;
-                font-weight: 700;
-                font-size: 13px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                text-align: center;
-                padding: 10px;
-            }}
-            .diagnosis-content {{
-                padding: 12px 14px;
-                font-size: 12px;
-                line-height: 1.3;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                text-align: center;
-            }}
-            .days-header,
-            .row-grid {{
-                display: grid;
-                grid-template-columns: 120px repeat(7, minmax(110px, 1fr)) 195px;
-            }}
-            .label-head,
-            .day-head,
-            .qty-head {{
-                background: {PRIMARY};
-                color: white;
-                font-weight: 700;
-                text-align: center;
-                padding: 8px 6px;
-                font-size: 12px;
-                border: 1px solid {BORDER};
-            }}
-            .row-label {{
-                background: {PRIMARY};
-                color: white;
-                font-weight: 700;
-                text-align: center;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-size: 12px;
-                border: 1px solid {BORDER};
-                padding: 6px;
-                min-height: 108px;
-                line-height: 1.15;
-            }}
-            .wide-label {{
-                min-height: 58px;
-            }}
-            .grid-cell {{
-                border: 1px solid {BORDER};
-                min-height: 108px;
-                padding: 10px 8px;
-                text-align: center;
-                font-size: 12px;
-                line-height: 1.28;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                overflow-wrap: anywhere;
-                word-break: break-word;
-            }}
-            .row-wide {{
-                display: grid;
-                grid-template-columns: 120px repeat(7, minmax(110px, 1fr)) 195px;
-            }}
-            .row-wide-content {{
-                border: 1px solid {BORDER};
-                min-height: 52px;
-                padding: 8px 10px;
-                font-size: 12px;
-                line-height: 1.28;
-                overflow-wrap: anywhere;
-                word-break: break-word;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                text-align: center;
-            }}
-            .span-7 {{
-                grid-column: span 7;
-            }}
-            .qty-col {{
-                border: 1px solid {BORDER};
-                min-height: 108px;
-                padding: 8px 10px;
-                font-size: 12px;
-                line-height: 1.28;
-                text-align: center;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                overflow-wrap: anywhere;
-                word-break: break-word;
-            }}
-            .qty-col.short {{
-                min-height: 52px;
-            }}
-            .bottom-grid {{
-                display: grid;
-                grid-template-columns: 2fr 1.15fr;
-                gap: 0;
-                margin-top: 8px;
-                border-top: 1px solid {BORDER};
-            }}
-            .bottom-box {{
-                border: 1px solid {BORDER};
-                min-height: 210px;
-                padding: 0;
-            }}
-            .bottom-title {{
-                background: {LIGHT_BG};
-                color: {TEXT};
-                font-weight: 700;
-                padding: 8px 10px;
-                font-size: 12px;
-                border-bottom: 1px solid {BORDER};
-            }}
-            .bottom-box ul {{
-                margin: 0;
-                padding: 12px 18px 12px 28px;
-                font-size: 12px;
-                line-height: 1.32;
-            }}
-            .list-left {{
-                margin: 0;
-                padding-left: 18px;
-                text-align: left;
-            }}
-            .list-center {{
-                margin: 0;
-                padding-left: 18px;
-                text-align: center;
-                list-style-position: inside;
-            }}
-            .diagnosis-content ul,
-            .row-wide-content ul {{
-                margin: 0;
-                padding-left: 18px;
-            }}
-            .empty {{
-                padding: 8px;
-                font-size: 12px;
-                color: #7b8794;
-            }}
-        </style>
+      <style>
+        * {{ box-sizing: border-box; }}
+        body {{ margin:0; padding:10px; background:#fff; font-family:Arial, Helvetica, sans-serif; color:{TEXT}; }}
+        .sheet {{ width:1080px; margin:0 auto; background:white; }}
+        table {{ border-collapse:collapse; table-layout:fixed; width:100%; }}
+        .green {{ background:{PRIMARY}; color:white; font-weight:700; }}
+
+        .top-table {{ margin-bottom:0; }}
+        .top-title {{ height:22px; font-size:14px; line-height:22px; text-align:center; text-transform:uppercase; border:1px solid {BORDER}; }}
+        .top-table > tbody > tr.top-row > td {{ height:82px; border:1px solid {BORDER}; vertical-align:middle; padding:0; }}
+        .patient-box table {{ height:82px; }}
+        .patient-box table tr {{ height:15px; }}
+        .patient-box table th, .patient-box table td {{ height:15px; }}
+        .patient-box th {{ width:78px; background:{PRIMARY}; color:white; font-size:8.5px; font-weight:700; text-align:center; border:1px solid {BORDER}; padding:2px 3px; }}
+        .patient-box td {{ font-size:8.5px; line-height:1.15; text-align:center; border:1px solid {BORDER}; padding:2px 5px; overflow-wrap:anywhere; }}
+        .blank-head {{ border:none !important; background:white; }}
+        .diag-label {{ background:{PRIMARY}; color:white; font-weight:700; font-size:8px; text-align:center; }}
+        .diag-text {{ font-size:7.5px; line-height:1.1; padding:4px 8px !important; }}
+        .logos-cell {{ background:white; text-align:center; }}
+        .logos-wrap {{ display:flex; justify-content:center; align-items:center; gap:20px; width:100%; height:100%; }}
+        .plan-logo {{ max-width:90px; max-height:46px; object-fit:contain; display:block; }}
+
+        .plan-table th, .plan-table td {{ border:1px solid {BORDER}; vertical-align:middle; }}
+        .plan-table thead th {{ height:18px; background:{PRIMARY}; color:white; font-size:8px; font-weight:700; text-align:center; padding:2px; }}
+        .row-label {{ background:{PRIMARY}; color:white; font-size:8px; font-weight:700; text-align:center; line-height:1.05; padding:2px; }}
+        .meal-cell {{ font-size:8.2px; line-height:1.25; text-align:center; padding:8px 6px; overflow-wrap:anywhere; word-break:break-word; }}
+        .meal-row td, .meal-row th {{ min-height:0; }}
+        .plan-table tr.meal-row > th, .plan-table tr.meal-row > td {{ height:96px; }}
+        .plan-table tr.row-almuerzo > th, .plan-table tr.row-almuerzo > td,
+        .plan-table tr.row-cena > th, .plan-table tr.row-cena > td {{ height:104px; }}
+        .plan-table tr.row-wide > th, .plan-table tr.row-wide > td {{ height:34px; }}
+        .wide-cell {{ font-size:8px; line-height:1.22; text-align:center; padding:6px 6px; }}
+        .qty-cell {{ font-size:8px; line-height:1.22; text-align:center; padding:8px 6px; }}
+        .gap-cell, .gap-head {{ width:8px !important; min-width:8px; max-width:8px; border:none !important; background:white !important; padding:0 !important; }}
+        .bullets {{ margin:0; padding-left:12px; text-align:left; }}
+        .bullets.compact {{ padding-left:10px; }}
+        .bullets li {{ margin:0; padding:0; }}
+        .empty {{ color:#7b8794; }}
+
+        .bottom-table {{ margin-top:0; }}
+        .bottom-table th, .bottom-table td {{ border:1px solid {BORDER}; }}
+        .bottom-table th {{ height:17px; background:{LIGHT_BG}; color:{TEXT}; text-align:left; font-size:8px; padding:2px 5px; }}
+        .bottom-table td {{ height:118px; font-size:7.8px; line-height:1.25; vertical-align:top; padding:7px 7px; }}
+      </style>
     </head>
     <body>
-        <div class="page">
-            {header_html if page == 1 else ""}
-            {main_table}
-            {bottom_html}
-        </div>
+      <div class="sheet">
+        <table class="top-table">
+          <colgroup>
+            <col style="width:310px">
+            <col style="width:120px">
+            <col style="width:130px">
+            <col style="width:260px">
+            <col style="width:260px">
+          </colgroup>
+          <tr><th class="green top-title" colspan="5">{title}</th></tr>
+          <tr class="top-row">
+            <td class="patient-box"><table>{patient_rows}</table></td>
+            <td class="blank-head"></td>
+            <td class="diag-label">Diagnóstico Nutricional</td>
+            <td class="diag-text">{_html_bullet_list(plan.get('diagnostico_items', []), compact=True)}</td>
+            <td class="logos-cell">{logos_html}</td>
+          </tr>
+        </table>
+
+        <table class="plan-table">
+          <colgroup>
+            <col style="width:56px">
+            <col span="7" style="width:125px">
+            <col style="width:8px">
+            <col style="width:141px">
+          </colgroup>
+          <thead>
+            <tr>
+              <th></th><th>DÍA 1</th><th>DÍA 2</th><th>DÍA 3</th><th>DÍA 4</th><th>DÍA 5</th><th>DÍA 6</th><th>DÍA 7</th><th class="gap-head"></th><th>Cantidades</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="meal-row row-desayuno">
+              <th class="row-label">Desayuno</th>{day_cells('desayuno')}<td class="gap-cell"></td><td class="qty-cell">{_html_bullet_list(cantidades[:5], compact=True)}</td>
+            </tr>
+            <tr class="row-wide">
+              <th class="row-label">1/2 mañana<br>1/2 tarde</th><td class="wide-cell" colspan="7">{_inline_text(plan.get('media_items', []))}</td><td class="gap-cell"></td><td class="qty-cell">{_html_bullet_list(cantidades[5:9], compact=True)}</td>
+            </tr>
+            <tr class="row-wide">
+              <th class="row-label">Ensalada</th><td class="wide-cell" colspan="7">{_inline_text(plan.get('ensalada_items', []))}</td><td class="gap-cell"></td><td class="qty-cell">{_html_bullet_list(cantidades[9:14], compact=True)}</td>
+            </tr>
+            <tr class="meal-row row-almuerzo">
+              <th class="row-label">Almuerzo</th>{day_cells('almuerzo')}<td class="gap-cell"></td><td class="qty-cell">—</td>
+            </tr>
+            <tr class="meal-row row-cena">
+              <th class="row-label">Cena</th>{day_cells('cena')}<td class="gap-cell"></td><td class="qty-cell">—</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <table class="bottom-table">
+          <colgroup><col style="width:65%"><col style="width:35%"></colgroup>
+          <tr><th>Recomendaciones</th><th>Consejos Claves para ti</th></tr>
+          <tr><td>{_html_bullet_list(plan.get('recomendaciones_items', []), compact=True)}</td><td>{_html_bullet_list(plan.get('consejos_items', []), compact=True)}</td></tr>
+        </table>
+      </div>
     </body>
     </html>
     """
+    return html
 
 
-def show_plan_preview(plan_data: Dict[str, Any], height: int = 980):
-    tab1, tab2 = st.tabs(["Página 1", "Página 2"])
-    with tab1:
-        components.html(render_plan_html(plan_data, page=1), height=height, scrolling=True)
-    with tab2:
-        components.html(render_plan_html(plan_data, page=2), height=height, scrolling=True)
+def show_plan_preview(plan_data: Dict[str, Any], height: int = 760):
+    components.html(render_plan_html(plan_data, page=1), height=height, scrolling=True)
 
 
-# ============================================================
+
 # PDF
-# ============================================================
+
 
 def build_plan_pdf(plan_data: Dict[str, Any]) -> bytes:
+    """Genera PDF usando una sola grilla de proporciones estables, similar a la plantilla de referencia."""
     plan = normalize_plan_for_render(plan_data)
     pac = plan.get("paciente", {})
     cab = plan.get("cabecera", {})
 
+    page_w, page_h = landscape(A4)
+    margin_x = 1.05 * cm
+    margin_y = 0.58 * cm
+    usable_w = page_w - 2 * margin_x
+
+    # Proporciones fijas replicadas en HTML: label + 7 días + separación + cantidades.
+    label_w = 1.36 * cm
+    gap_w = 0.20 * cm
+    qty_w = 3.45 * cm
+    day_w = (usable_w - label_w - gap_w - qty_w) / 7
+
+    # Cabecera: datos | aire | etiqueta diagnóstico | diagnóstico | logos
+    patient_w = 7.45 * cm
+    blank_w = 2.9 * cm
+    diag_label_w = 3.15 * cm
+    logos_w = 6.45 * cm
+    diag_text_w = usable_w - patient_w - blank_w - diag_label_w - logos_w
+
     styles = getSampleStyleSheet()
+    style_title = ParagraphStyle("plan_title_ref", parent=styles["BodyText"], fontSize=10.6, leading=11.2, textColor=colors.white, alignment=TA_CENTER, fontName="Helvetica-Bold")
+    style_small = ParagraphStyle("plan_small_ref", parent=styles["BodyText"], fontSize=6.0, leading=6.8, textColor=colors.HexColor(TEXT), alignment=TA_CENTER)
+    style_small_left = ParagraphStyle("plan_small_left_ref", parent=style_small, alignment=0)
+    style_label = ParagraphStyle("plan_label_ref", parent=styles["BodyText"], fontSize=5.9, leading=6.5, textColor=colors.white, alignment=TA_CENTER, fontName="Helvetica-Bold")
+    style_list = ParagraphStyle("plan_list_ref", parent=styles["BodyText"], fontSize=5.55, leading=6.25, textColor=colors.HexColor(TEXT), alignment=0)
+    style_footer_title = ParagraphStyle("plan_footer_title_ref", parent=styles["BodyText"], fontSize=5.45, leading=6.0, textColor=colors.HexColor(TEXT), fontName="Helvetica-Bold")
 
-    style_title = ParagraphStyle(
-        "style_title",
-        parent=styles["Heading1"],
-        fontSize=14,
-        leading=16,
-        alignment=TA_CENTER,
-        textColor=colors.white,
-    )
-    style_small = ParagraphStyle(
-        "style_small",
-        parent=styles["BodyText"],
-        fontSize=7.2,
-        leading=8.8,
-        textColor=colors.HexColor(TEXT),
-        alignment=TA_CENTER,
-    )
-    style_list = ParagraphStyle(
-        "style_list",
-        parent=styles["BodyText"],
-        fontSize=7.1,
-        leading=8.7,
-        textColor=colors.HexColor(TEXT),
-    )
-    style_lbl = ParagraphStyle(
-        "style_lbl",
-        parent=styles["BodyText"],
-        fontSize=8,
-        leading=9,
-        textColor=colors.white,
-        alignment=TA_CENTER,
-    )
+    def p(txt, style=style_small):
+        raw = str(txt if txt not in (None, "") else "—")
+        return Paragraph(escape(raw).replace("\n", "<br/>").replace("&lt;br&gt;", "<br/>").replace("&lt;br/&gt;", "<br/>") , style)
 
-    def p(txt, style):
-        txt = escape(str(txt or "—")).replace("\n", "<br/>")
-        return Paragraph(txt, style)
+    def bullets(items, style=style_list, bullet=True):
+        clean = [str(x).strip() for x in (items or []) if str(x).strip()]
+        if not clean:
+            return p("—", style_small)
+        prefix = "• " if bullet else ""
+        return Paragraph("<br/>".join(prefix + escape(x) for x in clean), style)
 
-    def list_para(items, style):
-        if not items:
-            return p("—", style)
-        return Paragraph("<br/>".join([f"• {escape(str(x))}" for x in items]), style)
+    def inline(items):
+        clean = [str(x).strip() for x in (items or []) if str(x).strip()]
+        if not clean:
+            return p("—", style_small)
+        return Paragraph(escape(" · ".join(clean)), style_small)
 
-    def title_band():
-        t = Table([[p(cab.get("titulo", "PLAN DE ALIMENTACIÓN"), style_title)]],
-                  colWidths=[28.1 * cm], rowHeights=[0.92 * cm])
+    def data_uri_to_image(data_uri: str, max_w: float = 1.85 * cm, max_h: float = 0.92 * cm):
+        if not data_uri:
+            return None
+        try:
+            if "," in data_uri:
+                data_uri = data_uri.split(",", 1)[1]
+            raw = base64.b64decode(data_uri)
+            img = Image(io.BytesIO(raw))
+            iw, ih = img.imageWidth, img.imageHeight
+            if not iw or not ih:
+                return None
+            scale = min(max_w / iw, max_h / ih, 1)
+            img.drawWidth = iw * scale
+            img.drawHeight = ih * scale
+            return img
+        except Exception:
+            return None
+
+    def logos_flowable():
+        logos = plan.get("logos") or {}
+        imgs = []
+        for key in ("dueno", "empresa"):
+            img = data_uri_to_image(logos.get(key))
+            if img:
+                imgs.append(img)
+        if not imgs:
+            return Paragraph("", style_small)
+        col_w = logos_w / len(imgs)
+        t = Table([imgs], colWidths=[col_w] * len(imgs), hAlign="CENTER")
         t.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(PRIMARY)),
-            ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor(BORDER)),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ]))
-        return t
-
-    def patient_box():
-        rows = [
-            [p("<b>DNI</b>", style_lbl), p(pac.get("dni") or "—", style_small)],
-            [p("<b>Nombres</b>", style_lbl), p(pac.get("nombres") or "—", style_small)],
-            [p("<b>Apellidos</b>", style_lbl), p(pac.get("apellidos") or "—", style_small)],
-            [p("<b>Objetivo</b>", style_lbl), p(cab.get("objetivo") or "—", style_small)],
-            [p("<b>Alergias</b>", style_lbl), p(cab.get("alergias") or "—", style_small)],
-            [p("<b>Intolerancias</b>", style_lbl), p(cab.get("intolerancias") or "—", style_small)],
-        ]
-        t = Table(rows, colWidths=[3.2 * cm, 11.0 * cm])
-        t.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (0, -1), colors.HexColor(PRIMARY)),
-            ("TEXTCOLOR", (0, 0), (0, -1), colors.white),
-            ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor(BORDER)),
-            ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor(BORDER)),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("ALIGN", (1, 0), (1, -1), "CENTER"),
-        ]))
-        return t
-
-    def diagnosis_box():
-        rows = [[p("<b>Diagnóstico Nutricional</b>", style_lbl), list_para(plan.get("diagnostico_items", []), style_list)]]
-        t = Table(rows, colWidths=[4.6 * cm, 9.3 * cm], rowHeights=[4.2 * cm])
-        t.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (0, 0), colors.HexColor(PRIMARY)),
-            ("TEXTCOLOR", (0, 0), (0, 0), colors.white),
-            ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor(BORDER)),
-            ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor(BORDER)),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ]))
-        return t
-
-    def days_header():
-        headers = ["", "DÍA 1", "DÍA 2", "DÍA 3", "DÍA 4", "DÍA 5", "DÍA 6", "DÍA 7", "Cantidades"]
-        t = Table([headers], colWidths=[2.15 * cm] + [3.0 * cm] * 7 + [4.95 * cm], rowHeights=[0.66 * cm])
-        t.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(PRIMARY)),
-            ("TEXTCOLOR", (0, 0), (-1, -1), colors.white),
-            ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor(BORDER)),
-            ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor(BORDER)),
             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("LEFTPADDING", (0, 0), (-1, -1), 1),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 1),
+            ("TOPPADDING", (0, 0), (-1, -1), 1),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
         ]))
         return t
 
-    def row_standard(label, field, qty_items=None):
-        qty_items = qty_items or []
-        row = [p(f"<b>{label}</b>", style_lbl)]
-        for i in range(1, 8):
-            row.append(p(plan["dias"].get(f"dia_{i}", {}).get(field) or "—", style_small))
-        row.append(list_para(qty_items, style_small))
-        t = Table([row], colWidths=[2.15 * cm] + [3.0 * cm] * 7 + [4.95 * cm])
+    def patient_table():
+        rows = [
+            [p("DNI", style_label), p(pac.get("dni") or "—", style_small)],
+            [p("Nombres", style_label), p(pac.get("nombres") or "—", style_small)],
+            [p("Apellidos", style_label), p(pac.get("apellidos") or "—", style_small)],
+            [p("Objetivo", style_label), p(cab.get("objetivo") or "—", style_small)],
+            [p("Alergias", style_label), p(cab.get("alergias") or "—", style_small)],
+            [p("Intolerancias", style_label), p(cab.get("intolerancias") or "—", style_small)],
+        ]
+        t = Table(rows, colWidths=[1.85 * cm, patient_w - 1.85 * cm], rowHeights=[0.30 * cm] * 6)
         t.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (0, 0), colors.HexColor(PRIMARY)),
-            ("TEXTCOLOR", (0, 0), (0, 0), colors.white),
-            ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor(BORDER)),
-            ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor(BORDER)),
+            ("BACKGROUND", (0, 0), (0, -1), colors.HexColor(PRIMARY)),
+            ("BOX", (0, 0), (-1, -1), 0.45, colors.HexColor(BORDER)),
+            ("INNERGRID", (0, 0), (-1, -1), 0.35, colors.HexColor(BORDER)),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("ALIGN", (1, 0), (7, 0), "CENTER"),
-            ("ALIGN", (8, 0), (8, 0), "CENTER"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 1),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 1),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
         ]))
         return t
 
-    def row_wide(label, items, qty_items=None):
-        qty_items = qty_items or []
-        inline_text = " · ".join(str(x) for x in items if x) if items else "—"
-        inline_para = Paragraph(escape(inline_text), style_small)
-        row = [p(f"<b>{label}</b>", style_lbl), inline_para, list_para(qty_items, style_small)]
-        t = Table([row], colWidths=[2.15 * cm, 21.0 * cm, 4.95 * cm])
+    def header_table():
+        rows = [
+            [p(cab.get("titulo", "PLAN DE ALIMENTACIÓN"), style_title), "", "", "", ""],
+            [patient_table(), "", p("Diagnóstico Nutricional", style_label), bullets(plan.get("diagnostico_items", []), style_list), logos_flowable()],
+        ]
+        t = Table(rows, colWidths=[patient_w, blank_w, diag_label_w, diag_text_w, logos_w], rowHeights=[0.52 * cm, 1.82 * cm])
         t.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (0, 0), colors.HexColor(PRIMARY)),
-            ("TEXTCOLOR", (0, 0), (0, 0), colors.white),
-            ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor(BORDER)),
-            ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor(BORDER)),
+            ("SPAN", (0, 0), (4, 0)),
+            ("BACKGROUND", (0, 0), (4, 0), colors.HexColor(PRIMARY)),
+            ("BACKGROUND", (2, 1), (2, 1), colors.HexColor(PRIMARY)),
+            ("BOX", (0, 0), (4, 0), 0.45, colors.HexColor(BORDER)),
+            ("BOX", (0, 1), (0, 1), 0.45, colors.HexColor(BORDER)),
+            ("BOX", (2, 1), (3, 1), 0.45, colors.HexColor(BORDER)),
+            ("BOX", (4, 1), (4, 1), 0.0, colors.white),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ]))
-        return t
-
-    def bottom_boxes():
-        rec = Table([
-            [p("<b>Recomendaciones</b>", style_list)],
-            [list_para(plan.get("recomendaciones_items", []), style_list)]
-        ], colWidths=[18.8 * cm], rowHeights=[0.68 * cm, 4.0 * cm])
-
-        con = Table([
-            [p("<b>Consejos Claves</b>", style_list)],
-            [list_para(plan.get("consejos_items", []), style_list)]
-        ], colWidths=[9.3 * cm], rowHeights=[0.68 * cm, 4.0 * cm])
-
-        for t in (rec, con):
-            t.setStyle(TableStyle([
-                ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor(BORDER)),
-                ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor(BORDER)),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(LIGHT_BG)),
-            ]))
-        wrap = Table([[rec, con]], colWidths=[18.8 * cm, 9.3 * cm])
-        wrap.setStyle(TableStyle([
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
             ("RIGHTPADDING", (0, 0), (-1, -1), 0),
             ("TOPPADDING", (0, 0), (-1, -1), 0),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ("LEFTPADDING", (3, 1), (3, 1), 4),
+            ("RIGHTPADDING", (3, 1), (3, 1), 4),
         ]))
-        return wrap
+        return t
+
+    col_widths = [label_w] + [day_w] * 7 + [gap_w, qty_w]
+    cantidades = plan.get("cantidades_items", [])
+
+    def main_table():
+        data = []
+        data.append(["", "DÍA 1", "DÍA 2", "DÍA 3", "DÍA 4", "DÍA 5", "DÍA 6", "DÍA 7", "", "Cantidades"])
+        data.append([p("Desayuno", style_label)] + [p(plan["dias"].get(f"dia_{i}", {}).get("desayuno") or "—", style_small) for i in range(1, 8)] + ["", bullets(cantidades[:5], style_small)])
+        data.append([p("1/2 mañana<br/>1/2 tarde", style_label), inline(plan.get("media_items", [])), "", "", "", "", "", "", "", bullets(cantidades[5:9], style_small)])
+        data.append([p("Ensalada", style_label), inline(plan.get("ensalada_items", [])), "", "", "", "", "", "", "", bullets(cantidades[9:14], style_small)])
+        data.append([p("Almuerzo", style_label)] + [p(plan["dias"].get(f"dia_{i}", {}).get("almuerzo") or "—", style_small) for i in range(1, 8)] + ["", p("—", style_small)])
+        data.append([p("Cena", style_label)] + [p(plan["dias"].get(f"dia_{i}", {}).get("cena") or "—", style_small) for i in range(1, 8)] + ["", p("—", style_small)])
+
+        t = Table(data, colWidths=col_widths, rowHeights=[0.42 * cm, 2.05 * cm, 0.68 * cm, 0.68 * cm, 2.25 * cm, 2.25 * cm], repeatRows=1)
+        stl = [
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(PRIMARY)),
+            ("BACKGROUND", (0, 1), (0, -1), colors.HexColor(PRIMARY)),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, 0), 5.6),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("GRID", (0, 0), (7, -1), 0.45, colors.HexColor(BORDER)),
+            ("GRID", (9, 0), (9, -1), 0.45, colors.HexColor(BORDER)),
+            ("BACKGROUND", (8, 0), (8, -1), colors.white),
+            ("LINEBEFORE", (8, 0), (8, -1), 0, colors.white),
+            ("LINEAFTER", (8, 0), (8, -1), 0, colors.white),
+            ("SPAN", (1, 2), (7, 2)),
+            ("SPAN", (1, 3), (7, 3)),
+            ("LEFTPADDING", (0, 0), (-1, -1), 1.4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 1.4),
+            ("TOPPADDING", (0, 0), (-1, -1), 2.2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2.2),
+            ("TOPPADDING", (0, 0), (-1, 0), 1),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 1),
+        ]
+        t.setStyle(TableStyle(stl))
+        return t
+
+    def bottom_table():
+        rec_w = usable_w * 0.65
+        con_w = usable_w - rec_w
+        t = Table([
+            [p("Recomendaciones", style_footer_title), p("Consejos Claves para ti", style_footer_title)],
+            [bullets(plan.get("recomendaciones_items", []), style_list), bullets(plan.get("consejos_items", []), style_list)],
+        ], colWidths=[rec_w, con_w], rowHeights=[0.36 * cm, 2.65 * cm])
+        t.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.45, colors.HexColor(BORDER)),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(LIGHT_BG)),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 2.4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 2.4),
+            ("TOPPADDING", (0, 0), (-1, -1), 1.4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 1.4),
+        ]))
+        return t
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
         pagesize=landscape(A4),
-        leftMargin=0.45 * cm,
-        rightMargin=0.45 * cm,
-        topMargin=0.45 * cm,
-        bottomMargin=0.45 * cm,
+        leftMargin=margin_x,
+        rightMargin=margin_x,
+        topMargin=margin_y,
+        bottomMargin=margin_y,
     )
 
-    story = []
-
-    story.append(title_band())
-    story.append(Spacer(1, 0.15 * cm))
-    logo_cell = Paragraph("", style_small)
-    top = Table([[patient_box(), diagnosis_box()]], colWidths=[14.2 * cm, 13.9 * cm])
-    top.setStyle(TableStyle([
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-    ]))
-    story.append(top)
-    story.append(Spacer(1, 0.15 * cm))
-    story.append(days_header())
-    story.append(row_standard("Desayuno", "desayuno", plan.get("cantidades_items", [])[:5]))
-    story.append(row_wide("1/2 mañana\n1/2 tarde", plan.get("media_items", []), plan.get("cantidades_items", [])[5:9]))
-    story.append(row_wide("Ensalada", plan.get("ensalada_items", []), plan.get("cantidades_items", [])[9:14]))
-    story.append(row_standard("Almuerzo", "almuerzo"))
-    story.append(row_standard("Cena", "cena"))
-    story.append(Spacer(1, 0.12 * cm))
-    story.append(bottom_boxes())
-
-    story.append(PageBreak())
-    story.append(days_header())
-    story.append(row_standard("Desayuno", "desayuno", plan.get("cantidades_items", [])[:5]))
-    story.append(row_wide("1/2 mañana\n1/2 tarde", plan.get("media_items", []), plan.get("cantidades_items", [])[5:9]))
-    story.append(row_wide("Ensalada", plan.get("ensalada_items", []), plan.get("cantidades_items", [])[9:14]))
-    story.append(row_standard("Almuerzo", "almuerzo"))
-    story.append(row_standard("Cena", "cena"))
-    story.append(Spacer(1, 0.12 * cm))
-    story.append(bottom_boxes())
-
+    story = [
+        header_table(),
+        Spacer(1, 0.06 * cm),
+        main_table(),
+        Spacer(1, 0.05 * cm),
+        bottom_table(),
+    ]
     doc.build(story)
     buffer.seek(0)
     return buffer.read()
 
 
-# ============================================================
+
 # EMAIL
-# ============================================================
+
 
 def send_plan_email(
     *,

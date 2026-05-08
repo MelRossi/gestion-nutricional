@@ -3,9 +3,9 @@ from utils import mostrar_sidebar
 from database import run_query, run_command
 from datetime import date, timedelta
 
-# ─────────────────────────────────────────
+
 # CONTROL DE ACCESO — solo pacientes
-# ─────────────────────────────────────────
+
 if "usuario" not in st.session_state:
     st.warning("Debes iniciar sesión para acceder.")
     st.stop()
@@ -21,9 +21,9 @@ if not id_paciente:
     st.error("Tu cuenta no tiene un perfil de paciente. Contactá al administrador.")
     st.stop()
 
-# ─────────────────────────────────────────
+
 # VERIFICAR QUE TENGA CONTRATO ACTIVO
-# ─────────────────────────────────────────
+
 contrato = run_query("""
     SELECT c.id_contrato, c.id_nutricionista,
            pr.nombre AS programa,
@@ -50,9 +50,9 @@ primera_sesion = run_query("""
     LIMIT 1
 """, (c["id_contrato"],))
 
-# ─────────────────────────────────────────
+
 # PÁGINA
-# ─────────────────────────────────────────
+
 mostrar_sidebar()
 
 st.title("Elegí tu primera consulta")
@@ -83,9 +83,9 @@ if primera_sesion and primera_sesion[0]["estado"] == "programada":
         st.rerun()
     st.stop()
 
-# ─────────────────────────────────────────
+
 # MOSTRAR SLOTS DISPONIBLES
-# ─────────────────────────────────────────
+
 st.subheader("Slots disponibles")
 st.caption("Selecciona el día y horario que mejor te quede para tu primera consulta.")
 
