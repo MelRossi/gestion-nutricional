@@ -411,7 +411,7 @@ with tab4:
 
 with tab5:
     st.subheader("Links de onboarding")
-    st.caption("Copiá estos links para enviar a pacientes según corresponda.")
+    st.caption("Copia estos links para enviar a pacientes según corresponda.")
 
     try:
         base_url = st.secrets.get("APP_BASE_URL", "")
@@ -421,8 +421,8 @@ with tab5:
     if not base_url:
         base_url = st.text_input(
             "URL base de la app",
-            value="https://tu-app.streamlit.app",
-            help="Reemplazá por la URL real de tu app publicada.",
+            value="https://gestion-nutricional.streamlit.app/",
+            help="Si no se completa, se usará la URL de Streamlit Cloud (si corresponde) o el localhost en desarrollo. ",
             key="admin_links_base_url",
         )
 
@@ -445,8 +445,8 @@ with tab5:
 
     st.markdown("---")
     st.info(
-        "Para que la URL base se complete automáticamente, podés agregar APP_BASE_URL "
-        "en los secrets de Streamlit. Ejemplo: APP_BASE_URL='https://tu-app.streamlit.app'"
+        "Estos links usan la misma pantalla de registro, pero ya indican el tipo de paciente "
+        "para cargar el onboarding correspondiente: persona o empresa."
     )
 
     formularios = run_query("""
@@ -460,4 +460,3 @@ with tab5:
         st.dataframe(pd.DataFrame(formularios), use_container_width=True, hide_index=True)
     else:
         st.warning("No se encontraron formularios de onboarding activos.")
-

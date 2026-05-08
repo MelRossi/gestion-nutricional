@@ -100,7 +100,8 @@ def mostrar_sidebar():
             _nav_label("GESTIÓN")
             st.page_link("app.py", label="Inicio")
             st.page_link("pages/5_admin.py", label="Administración")
-            st.page_link("pages/5b_contratos.py", label="Contratos")
+            st.page_link("pages/4_pagos.py", label="Pagos y programas")
+            st.page_link("pages/5b_contratos.py", label="Contratos y reprogramaciones")
 
             _nav_label("OPERACIÓN")
             st.page_link("pages/1_agenda.py", label="Agenda")
@@ -108,7 +109,6 @@ def mostrar_sidebar():
             st.page_link("pages/3_ficha_paciente.py", label="Ficha del paciente")
             st.page_link("pages/3b_cargar_plan.py", label="Cargar plan")
             st.page_link("pages/carga_manual_onboarding.py", label="Carga manual formulario")
-            st.page_link("pages/4_pagos.py", label="Pagos y programas")
 
         elif rol == "nutricionista":
             _nav_label("MI TRABAJO")
