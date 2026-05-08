@@ -239,8 +239,8 @@ tab0, tab1, tab2 = st.tabs(["Asignar programa", "Registrar pago", "Resumen de pa
 with tab0:
     st.subheader("Asignar programa a paciente")
     st.caption(
-        "Usá esta sección cuando el paciente ya completó el onboarding. "
-        "Acá se asigna el programa y se generan contrato, cuota pendiente y sesiones. "
+        "Usa esta sección cuando el paciente ya completó el onboarding. "
+        "Aquí se asigna el programa y se generan contrato y sesiones. "
         "El pago se carga luego desde la pestaña Registrar pago."
     )
 
@@ -395,7 +395,7 @@ with tab0:
 
                 st.markdown("---")
                 st.markdown(f"**Precio base del programa:** {fmt_money(programa['precio_base'])}")
-                st.caption("El descuento, método de pago y monto abonado se cargan en la pestaña Registrar pago.")
+                st.caption("El monto abonado y el método de pago se cargan en la pestaña Registrar pago.")
 
             if st.button(
                 "Asignar programa",
@@ -413,7 +413,7 @@ with tab0:
 
                     st.success(
                         f"Programa asignado correctamente. Contrato #{id_contrato} creado "
-                        "con cuota pendiente y sesiones generadas."
+                        ""
                     )
                     st.rerun()
 

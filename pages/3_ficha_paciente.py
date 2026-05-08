@@ -12,7 +12,7 @@ from plan_utils import build_plan_pdf, read_plan_record, show_plan_preview
 
 
 if "usuario" not in st.session_state:
-    st.warning("Debes iniciar sesión.")
+    st.warning("Debés iniciar sesión.")
     st.stop()
 
 usuario = st.session_state["usuario"]
@@ -862,10 +862,27 @@ def build_sesiones_visuales(id_contrato):
 if rol == "administrador":
     pacientes = run_query(
         """
-        SELECT id_paciente, nombre || ' ' || apellido AS paciente
-        FROM pacientes
-        ORDER BY apellido, nombre
+        SELECT DISTINCT ON (p.id_paciente)
+               p.id_paciente,
+               p.nombre || ' ' || p.apellido AS paciente,
+               c.fecha_inicio,
+               c.estado AS estado_contrato
+        FROM pacientes p
+        LEFT JOIN contratos c ON c.id_paciente = p.id_paciente
+        ORDER BY p.id_paciente,
+                 CASE WHEN c.estado='activo' THEN 0 ELSE 1 END,
+                 c.fecha_inicio DESC NULLS LAST
         """
+    )
+
+    pacientes = sorted(
+        pacientes,
+        key=lambda p: (
+            p.get("fecha_inicio") is None,
+            str(p.get("fecha_inicio") or ""),
+            p.get("paciente") or "",
+        ),
+        reverse=False,
     )
 elif rol == "nutricionista":
     pacientes = run_query(
@@ -905,18 +922,32 @@ if not pacientes:
     st.stop()
 
 default_id = st.session_state.get("id_paciente_ficha")
-ids = [p["id_paciente"] for p in pacientes]
+
+# Usamos objetos como opciones para evitar errores si hay nombres repetidos,
+# pero visualmente mostramos solo el nombre del paciente, sin ID.
+opciones = []
+for p in pacientes:
+    id_p = p["id_paciente"]
+    nombre_p = p.get("paciente") or "Paciente sin nombre"
+    opciones.append({
+        "label": nombre_p,
+        "id_paciente": id_p,
+    })
+
+ids = [op["id_paciente"] for op in opciones]
 default_index = ids.index(default_id) if default_id in ids else 0
 
-opciones = {p["paciente"]: p["id_paciente"] for p in pacientes}
+if default_index < 0 or default_index >= len(opciones):
+    default_index = 0
 
-nombre_sel = st.selectbox(
+opcion_sel = st.selectbox(
     "Seleccionar paciente",
-    list(opciones.keys()),
+    opciones,
     index=default_index,
+    format_func=lambda op: op["label"],
 )
 
-id_paciente = opciones[nombre_sel]
+id_paciente = opcion_sel["id_paciente"]
 st.session_state["id_paciente_ficha"] = id_paciente
 
 
@@ -1548,7 +1579,7 @@ with tab5:
 
                     accion_sesion = st.radio(
                         "Acción",
-                        ["Marcar atendida", "Marcar ausente", "Cancelar sesión", "Reprogramar"],
+                        ["Marcar atendida", "Marcar ausente", "Reprogramar"],
                         horizontal=True,
                         key="ficha_accion_sesion",
                     )
@@ -1605,43 +1636,6 @@ with tab5:
                                     (sesion_data["id_sesion"],),
                                 )
                                 st.success("Sesión marcada como ausente.")
-                                st.rerun()
-
-                    elif accion_sesion == "Cancelar sesión":
-                        st.warning(
-                            "La sesión quedará cancelada y se liberará el horario asociado si existía una reserva en disponibilidad."
-                        )
-
-                        motivo_cancelacion = st.text_input(
-                            "Motivo de cancelación",
-                            placeholder="Ej: cancelación solicitada por paciente / cambio administrativo...",
-                            key="ficha_motivo_cancelacion",
-                        )
-
-                        confirmar_cancelacion = st.checkbox(
-                            "Confirmo que quiero cancelar esta sesión",
-                            key="ficha_confirmar_cancelacion",
-                        )
-
-                        col_esp, col_btn = st.columns([3, 1])
-                        with col_btn:
-                            if st.button(
-                                "Guardar cancelada",
-                                use_container_width=True,
-                                key="ficha_guardar_cancelada",
-                                disabled=not confirmar_cancelacion,
-                            ):
-                                run_command(
-                                    """
-                                    UPDATE sesiones
-                                    SET estado = 'cancelada',
-                                        motivo_reprogramacion = COALESCE(NULLIF(%s, ''), motivo_reprogramacion)
-                                    WHERE id_sesion = %s
-                                    """,
-                                    (motivo_cancelacion, sesion_data["id_sesion"]),
-                                )
-                                limpiar_reserva_disponibilidad(sesion_data["id_sesion"])
-                                st.success("Sesión cancelada correctamente.")
                                 st.rerun()
 
                     else:

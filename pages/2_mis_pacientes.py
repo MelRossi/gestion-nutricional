@@ -29,7 +29,6 @@ mostrar_sidebar()
 page_header("Pacientes")
 
 
-
 # HELPERS
 
 def normalizar(texto):
@@ -135,6 +134,12 @@ def preparar_df_pacientes(registros, incluir_nutricionista=False):
     df["_fecha_orden"] = pd.to_datetime(df.get("fecha_inicio"), errors="coerce")
     df = df.sort_values("_fecha_orden", ascending=False, na_position="last")
     df = df.drop(columns=["_fecha_orden"], errors="ignore")
+
+    # Importante para st.dataframe(on_select):
+    # al ordenar, pandas conserva el índice original; Streamlit puede devolver
+    # la fila seleccionada según el índice visible/interno y abrir otra ficha.
+    # Resetear el índice evita desfasajes entre la fila seleccionada y el id_paciente.
+    df = df.reset_index(drop=True)
 
     cols = ["Paciente", "Tipo", "Empresa", "Programa"]
 
@@ -322,10 +327,16 @@ def render_tabla_pacientes(registros, incluir_nutricionista=False, key_prefix="p
         incluir_nutricionista=incluir_nutricionista,
     )
 
+    # Seguridad: tabla interna con índice limpio y el id oculto.
+    # La tabla visible NO muestra id_paciente, pero la selección queda vinculada
+    # al id real guardado en df.
+    df = df.reset_index(drop=True)
+    df_visible = df[cols].copy().reset_index(drop=True)
+
     st.markdown(f"**{len(df)} paciente(s)**")
 
     evento = st.dataframe(
-        df[cols],
+        df_visible,
         use_container_width=True,
         height=390,
         hide_index=True,
@@ -334,19 +345,30 @@ def render_tabla_pacientes(registros, incluir_nutricionista=False, key_prefix="p
         key=f"{key_prefix}_tabla_pacientes",
     )
 
-    seleccion = None
+    # IMPORTANTE:
+    # Al hacer click en "Abrir ficha", Streamlit vuelve a ejecutar la página.
+    # Si usamos directamente evento.selection en ese rerun, puede abrir otra fila.
+    # Por eso guardamos el id seleccionado en session_state en el momento de selección
+    # y el botón abre SIEMPRE ese id guardado.
     try:
         filas = evento.selection.rows
         if filas:
-            seleccion = df.iloc[filas[0]]
+            pos = int(filas[0])
+            if 0 <= pos < len(df):
+                seleccion = df.iloc[pos]
+                st.session_state[f"{key_prefix}_paciente_sel_id"] = int(seleccion["id_paciente"])
+                st.session_state[f"{key_prefix}_paciente_sel_nombre"] = str(seleccion["Paciente"])
     except Exception:
-        seleccion = None
+        pass
 
-    if seleccion is not None:
+    id_sel = st.session_state.get(f"{key_prefix}_paciente_sel_id")
+    nombre_sel = st.session_state.get(f"{key_prefix}_paciente_sel_nombre")
+
+    if id_sel:
         col_a, col_b = st.columns([3, 1])
 
         with col_a:
-            st.caption(f"Seleccionaste: {seleccion['Paciente']}")
+            st.caption(f"Seleccionaste: {nombre_sel}")
 
         with col_b:
             if st.button(
@@ -355,10 +377,10 @@ def render_tabla_pacientes(registros, incluir_nutricionista=False, key_prefix="p
                 type="primary",
                 key=f"{key_prefix}_abrir_ficha",
             ):
-                abrir_ficha(int(seleccion["id_paciente"]))
+                abrir_ficha(int(id_sel))
 
         st.markdown("---")
-        render_desempeno_paciente(int(seleccion["id_paciente"]))
+        render_desempeno_paciente(int(id_sel))
 
 
 
