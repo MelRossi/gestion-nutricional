@@ -279,7 +279,7 @@ if "usuario" in st.session_state:
                 st.switch_page("pages/onboarding_form.py")
 
     mostrar_sidebar()
-    page_header("Gisella - Nutrición Profesional", f"Bienvenida, {nombre}")
+    page_header("Nutrición Profesional", f"Bienvenida, {nombre}")
 
     if rol == "administrador":
         _dashboard_admin()
@@ -297,7 +297,7 @@ if "usuario" in st.session_state:
 col_logo, col_btns = st.columns([5, 1])
 
 with col_logo:
-    st.markdown("# Gisella - Nutrición Profesional")
+    st.markdown("# Nutrición Profesional")
     st.markdown("##### Transforma tu salud con un plan personalizado y seguimiento profesional")
 
 with col_btns:
