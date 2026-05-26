@@ -30,7 +30,7 @@ def resetear_flujo():
 
 col_logo, col_login = st.columns([6, 1])
 with col_logo:
-    st.markdown("## Gisella - Nutrición Profesional")
+    st.markdown("## Nutrición Profesional")
     st.caption("Transforma tu salud con un plan personalizado")
 with col_login:
     st.markdown("<br>", unsafe_allow_html=True)
