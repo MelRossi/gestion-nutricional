@@ -3,7 +3,7 @@ from database import run_query
 from utils import cargar_estilos, mostrar_sidebar, page_header, info_banner
 
 st.set_page_config(
-    page_title="Gisella - Nutrición Profesional",
+    page_title="Sistema de Gestión Nutricional",
     page_icon="🥗",
     layout="wide"
 )
