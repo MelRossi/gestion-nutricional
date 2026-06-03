@@ -105,10 +105,10 @@ El sistema fue diseñado para digitalizar y centralizar el flujo completo de tra
 
 ---
 
-# 🧩 Arquitectura del proyecto
+# Arquitectura del proyecto
 
 ```bash
-📦 gestion-nutricional
+ gestion-nutricional
 ├── app.py
 ├── database.py
 ├── utils.py
@@ -133,7 +133,7 @@ El sistema fue diseñado para digitalizar y centralizar el flujo completo de tra
 
 ---
 
-# 🔐 Funcionalidades destacadas
+# Funcionalidades destacadas
 
 ## Sistema multirol
 
@@ -176,7 +176,7 @@ La arquitectura modular permite agregar fácilmente:
 
 ---
 
-# 🧠 Aprendizajes y desafíos técnicos
+# Aprendizajes y desafíos técnicos
 
 Este proyecto implicó trabajar con:
 
