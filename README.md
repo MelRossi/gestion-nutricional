@@ -1,4 +1,4 @@
-# 🥗 Sistema de Gestión Nutricional
+# Sistema de Gestión Nutricional
 
 Aplicación web desarrollada con Python, Streamlit y PostgreSQL para la gestión integral de pacientes, programas nutricionales, contratos, pagos, sesiones y seguimiento clínico.
 
@@ -6,7 +6,7 @@ El sistema fue diseñado para digitalizar y centralizar el flujo completo de tra
 
 ---
 
-# ✨ Características principales
+# Características principales
 
 ## 👥 Gestión de usuarios y roles
 
